@@ -1,0 +1,26 @@
+# GitHub Issue Analyzer - Environment Variables
+# Copy this file to .env and fill in your actual values
+
+# GitHub Personal Access Token
+# Generate at: https://github.com/settings/tokens
+# Needs repo access for private repos, or public_repo for public repos
+GITHUB_TOKEN=your_github_token_here
+
+# Google API Key for Gemini AI
+# Get from: https://console.cloud.google.com/apis/credentials
+GOOGLE_API_KEY=your_google_api_key_here
+
+# Pinecone API Key
+# Get from: https://app.pinecone.io/
+PINECONE_API_KEY=your_pinecone_api_key_here
+
+# Pinecone Environment (check your Pinecone console for the exact environment name)
+# Common values: gcp-starter, aws-starter, azure-starter
+PINECONE_ENVIRONMENT=gcp-starter
+
+# Pinecone Index Name (will be created if it doesn't exist)
+PINECONE_INDEX_NAME=github-repo-knowledge-base
+
+# Google Docs Document ID for storing analysis results
+# Extract from the Google Docs URL: https://docs.google.com/document/d/{DOCUMENT_ID}/edit
+GOOGLE_DOCS_ID=your_google_docs_document_id_here 

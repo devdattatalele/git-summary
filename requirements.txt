@@ -1,0 +1,33 @@
+# GitHub Issue Analyzer Requirements
+# Compatible versions for all dependencies
+
+# Core dependencies
+python-dotenv==1.0.0
+tqdm==4.67.1
+
+# GitHub API
+PyGithub==2.1.1
+
+# Pinecone (new SDK with serverless support)
+pinecone==7.3.0
+
+# Google AI and APIs
+google-generativeai==0.8.3
+google-auth==2.25.2
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.110.0
+
+# LangChain ecosystem
+langchain==0.1.0
+langchain-core==0.3.71
+langchain-google-genai==0.0.11
+langchain-pinecone==0.2.10
+
+# Protobuf compatibility
+protobuf==3.20.3
+
+# Additional dependencies
+numpy>=1.22.0
+requests>=2.19.0
+urllib3>=1.21.1 

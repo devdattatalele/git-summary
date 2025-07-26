@@ -10,17 +10,17 @@ GITHUB_TOKEN=your_github_token_here
 # Get from: https://console.cloud.google.com/apis/credentials
 GOOGLE_API_KEY=your_google_api_key_here
 
-# Pinecone API Key
-# Get from: https://app.pinecone.io/
-PINECONE_API_KEY=your_pinecone_api_key_here
-
-# Pinecone Environment (check your Pinecone console for the exact environment name)
-# Common values: gcp-starter, aws-starter, azure-starter
-PINECONE_ENVIRONMENT=gcp-starter
-
-# Pinecone Index Name (will be created if it doesn't exist)
-PINECONE_INDEX_NAME=github-repo-knowledge-base
+# Note: Chroma vector database is used locally, no API key required
+# The database will be stored in the 'chroma_db' directory
 
 # Google Docs Document ID for storing analysis results
 # Extract from the Google Docs URL: https://docs.google.com/document/d/{DOCUMENT_ID}/edit
-GOOGLE_DOCS_ID=your_google_docs_document_id_here 
+GOOGLE_DOCS_ID=your_google_docs_document_id_here
+
+# Patch Generation Configuration (Phase 2 features)
+# Enable or disable automatic patch generation
+ENABLE_PATCH_GENERATION=true
+
+# Maximum complexity (1-5) for which to auto-create PRs
+# Issues with complexity > this value will only generate patches but not create PRs
+MAX_COMPLEXITY_FOR_AUTO_PR=2 

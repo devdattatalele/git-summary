@@ -8,8 +8,12 @@ tqdm==4.67.1
 # GitHub API
 PyGithub==2.1.1
 
-# Pinecone (new SDK with serverless support)
-pinecone==7.3.0
+# Git operations for patch generation
+GitPython==3.1.40
+
+# Chroma (local vector database)
+chromadb==1.0.15
+langchain-chroma==0.2.5
 
 # Google AI and APIs
 google-generativeai==0.8.3

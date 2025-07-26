@@ -7,10 +7,9 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from github import Github
-from pinecone import Pinecone
 # --- LangChain Imports ---
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_pinecone import PineconeVectorStore
+from langchain_chroma import Chroma
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.tools.retriever import create_retriever_tool
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,22 +20,33 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+# --- Patch Generator Import ---
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from patch_generator import generate_and_create_pr
+
 # --- Configuration ---
 load_dotenv()
 
 # Load API keys from .env file
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 GOOGLE_DOCS_ID = os.getenv("GOOGLE_DOCS_ID")
+
+# Chroma configuration
+#CHROMA_PERSIST_DIR = "chroma_db"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
+COLLECTION_ISSUES = "issues_history"
+
+# Patch generator configuration
+ENABLE_PATCH_GENERATION = os.getenv("ENABLE_PATCH_GENERATION", "true").lower() == "true"
+MAX_COMPLEXITY_FOR_AUTO_PR = int(os.getenv("MAX_COMPLEXITY_FOR_AUTO_PR", "2"))
 
 # Validate required environment variables
 required_vars = {
     'GOOGLE_API_KEY': GOOGLE_API_KEY,
-    'PINECONE_API_KEY': PINECONE_API_KEY,
     'GITHUB_TOKEN': GITHUB_TOKEN,
-    'PINECONE_INDEX_NAME': PINECONE_INDEX_NAME,
     'GOOGLE_DOCS_ID': GOOGLE_DOCS_ID
 }
 
@@ -67,35 +77,35 @@ def get_github_issue(owner: str, repo_name: str, issue_number: int):
     except Exception as e:
         raise Exception(f"Failed to fetch GitHub issue: {e}")
 
-def initialize_pinecone_retriever():
-    """Initializes the Pinecone vector store and retriever tool."""
-    print("Initializing Pinecone vector store and retriever...")
+def initialize_chroma_retriever():
+    """Initializes the Chroma vector store and retriever tool."""
+    print("Initializing Chroma vector store and retriever...")
     try:
-        # Initialize Pinecone with new API
-        print(f"Initializing Pinecone...")
-        pc = Pinecone(api_key=PINECONE_API_KEY)
-        
-        # Check if the index exists
-        available_indexes = [index.name for index in pc.list_indexes()]
-        if PINECONE_INDEX_NAME not in available_indexes:
+        # Check if Chroma database exists
+        if not os.path.exists(CHROMA_PERSIST_DIR):
             raise ValueError(
-                f"Pinecone index '{PINECONE_INDEX_NAME}' not found. "
-                f"Available indexes: {available_indexes}. "
+                f"Chroma database not found at '{CHROMA_PERSIST_DIR}'. "
                 f"Please run the ingestion script first."
             )
         
-        # Connect to the specific index
-        pinecone_index = pc.Index(PINECONE_INDEX_NAME)
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GOOGLE_API_KEY)
-        
-        # Use the standard langchain-pinecone integration
-        vector_store = PineconeVectorStore(
-            index=pinecone_index,
-            embedding=embeddings,
-            text_key="text"
+        # Initialize embeddings
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001", 
+            google_api_key=GOOGLE_API_KEY
         )
         
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        # Connect to the Chroma collection for issues
+        print(f"Loading Chroma collection: {COLLECTION_ISSUES}")
+        chroma_store = Chroma(
+            embedding_function=embeddings,
+            persist_directory=CHROMA_PERSIST_DIR,
+            collection_name=COLLECTION_ISSUES
+        )
+        
+        # Create retriever
+        retriever = chroma_store.as_retriever(
+            search_kwargs={"k": 5}
+        )
         
         # This creates the tool the agent can use
         tool = create_retriever_tool(
@@ -105,14 +115,14 @@ def initialize_pinecone_retriever():
         )
         return tool
     except Exception as e:
-        raise Exception(f"Failed to initialize Pinecone retriever: {e}")
+        raise Exception(f"Failed to initialize Chroma retriever: {e}")
 
 def create_langchain_agent(issue):
     """Creates and runs the LangChain agent to analyze the issue."""
     print("Initializing LangChain Agent...")
     try:
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2, google_api_key=GOOGLE_API_KEY)
-        retriever_tool = initialize_pinecone_retriever()
+        retriever_tool = initialize_chroma_retriever()
         tools = [retriever_tool]
 
         # Enhanced prompt template with better instructions
@@ -213,6 +223,36 @@ def parse_agent_output(raw_output: str):
             "similar_issues": []
         }
 
+def generate_patches_for_issue(issue, analysis):
+    """Generate patches for the issue if conditions are met."""
+    print("Evaluating issue for patch generation...")
+    
+    if not ENABLE_PATCH_GENERATION:
+        print("Patch generation is disabled (ENABLE_PATCH_GENERATION=false)")
+        return None
+    
+    try:
+        complexity = analysis.get('complexity', 5)
+        issue_body = f"Title: {issue.title}\n\nBody: {issue.body or 'No description provided.'}"
+        
+        result = generate_and_create_pr(
+            issue_body=issue_body,
+            repo_full_name=issue.repository.full_name,
+            issue_number=issue.number,
+            complexity=complexity,
+            max_complexity=MAX_COMPLEXITY_FOR_AUTO_PR
+        )
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in patch generation: {e}")
+        return {
+            "patch_data": {"filesToUpdate": [], "summaryOfChanges": f"Error: {str(e)}"},
+            "pr_url": f"Patch generation failed: {str(e)}",
+            "created_pr": False
+        }
+
 def append_to_google_doc(text_to_append: str):
     """Handles authentication and appends text to the specified Google Doc."""
     try:
@@ -254,6 +294,7 @@ def append_to_google_doc(text_to_append: str):
 def main():
     parser = argparse.ArgumentParser(description="Analyze a GitHub issue and summarize it in a Google Doc.")
     parser.add_argument("issue_url", type=str, help="The full URL of the GitHub issue to analyze.")
+    parser.add_argument("--no-patches", action="store_true", help="Skip patch generation")
     args = parser.parse_args()
 
     try:
@@ -272,7 +313,12 @@ def main():
         # 3. Parse the output
         analysis = parse_agent_output(agent_raw_output)
         
-        # 4. Format the final report
+        # 4. Generate patches if enabled and not skipped
+        patch_result = None
+        if not args.no_patches:
+            patch_result = generate_patches_for_issue(issue, analysis)
+        
+        # 5. Format the final report
         report_text = f"""---
 ### Issue #{issue.number}: {issue.title}
 - **Repository:** {issue.repository.full_name}
@@ -287,17 +333,53 @@ def main():
 | **Similar Issues**  | {', '.join(analysis.get('similar_issues', [])) or 'None Found'} |
 
 **Proposed Solution:**
-{analysis.get('proposed_solution', 'N/A')}
+{analysis.get('proposed_solution', 'N/A')}"""
+
+        # Add patch generation results if available
+        if patch_result:
+            report_text += f"""
+
+**Patch Generation Results:**
+"""
+            if patch_result.get('created_pr'):
+                report_text += f"""- **Auto-generated PR:** {patch_result.get('pr_url', 'N/A')}
+- **Files Modified:** {len(patch_result.get('patch_data', {}).get('filesToUpdate', []))}
+- **Summary of Changes:** {patch_result.get('patch_data', {}).get('summaryOfChanges', 'N/A')}"""
+            else:
+                report_text += f"""- **Status:** {patch_result.get('pr_url', 'N/A')}
+- **Reason:** Complexity too high or no patches generated"""
+                
+                # Show patch summary even if PR wasn't created
+                patch_data = patch_result.get('patch_data', {})
+                if patch_data.get('filesToUpdate'):
+                    report_text += f"""
+- **Potential Changes:** {len(patch_data.get('filesToUpdate', []))} files identified
+- **Summary:** {patch_data.get('summaryOfChanges', 'N/A')}"""
+        elif args.no_patches:
+            report_text += """
+
+**Patch Generation:** Skipped (--no-patches flag)"""
+        else:
+            report_text += """
+
+**Patch Generation:** Disabled or failed"""
+
+        report_text += """
 
 ---
 
 """
 
-        # 5. Append to Google Doc
+        # 6. Append to Google Doc
         append_to_google_doc(report_text)
         
         print("--- Analysis Complete ---")
         print(f"Issue #{issue.number} has been analyzed and documented.")
+        
+        if patch_result and patch_result.get('created_pr'):
+            print(f"🎉 Auto-generated PR created: {patch_result.get('pr_url')}")
+        elif patch_result:
+            print(f"ℹ️ Patch generation result: {patch_result.get('pr_url')}")
 
     except Exception as e:
         print(f"An error occurred during the process: {e}")

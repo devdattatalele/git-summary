@@ -5,6 +5,7 @@ credentials.json
 
 # Chroma vector database
 chroma_db/
+creds.txt
 
 # Python
 __pycache__/

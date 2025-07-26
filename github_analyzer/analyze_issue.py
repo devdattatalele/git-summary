@@ -150,7 +150,7 @@ def create_langchain_agent(issue):
         
         IMPORTANT: Your Final Answer MUST be a valid JSON object with exactly these keys:
         1. "summary": A concise, one-sentence summary of the user's problem.
-        2. "proposed_solution": A detailed step-by-step technical plan to solve the issue. If the context contains a similar solved issue, reference it and adapt the solution. Use newline characters for formatting.
+        2. "proposed_solution": A detailed step-by-step technical plan to solve the issue. This should contain a list of steps to solve the issue including the file name and its directory and line number which needs to be updated with problem description and the solution. If the context contains a similar solved issue, reference it and adapt the solution. Use newline characters for formatting.
         3. "complexity": An integer from 1 to 5 (1=Trivial, 5=Very Complex).
         4. "similar_issues": An array of strings containing the source of any relevant past issues from the context (e.g., ["issue #123", "issue #456"]). If no relevant issues are found, return an empty array [].
 
@@ -321,48 +321,48 @@ def main():
         # 5. Format the final report
         report_text = f"""---
 ### Issue #{issue.number}: {issue.title}
-- **Repository:** {issue.repository.full_name}
-- **Link:** {issue.html_url}
-- **Analyzed On:** {datetime.now().strftime('%d %B, %Y at %H:%M')}
-- **Status:** {issue.state}
+- Repository: {issue.repository.full_name}
+- Link: {issue.html_url}
+- Analyzed On: {datetime.now().strftime('%d %B, %Y at %H:%M')}
+- Status: {issue.state}
 
 | Category            | AI Analysis                                                  |
 | ------------------- | ------------------------------------------------------------ |
-| **Summary**         | {analysis.get('summary', 'N/A')}                             |
-| **Complexity**      | {analysis.get('complexity', 'N/A')} / 5                      |
-| **Similar Issues**  | {', '.join(analysis.get('similar_issues', [])) or 'None Found'} |
+| Summary         | {analysis.get('summary', 'N/A')}                             |
+| Complexity      | {analysis.get('complexity', 'N/A')} / 5                      |
+| Similar Issues  | {', '.join(analysis.get('similar_issues', [])) or 'None Found'} |
 
-**Proposed Solution:**
+Proposed Solution
 {analysis.get('proposed_solution', 'N/A')}"""
 
         # Add patch generation results if available
         if patch_result:
             report_text += f"""
 
-**Patch Generation Results:**
+Patch Generation Results:
 """
             if patch_result.get('created_pr'):
-                report_text += f"""- **Auto-generated PR:** {patch_result.get('pr_url', 'N/A')}
-- **Files Modified:** {len(patch_result.get('patch_data', {}).get('filesToUpdate', []))}
-- **Summary of Changes:** {patch_result.get('patch_data', {}).get('summaryOfChanges', 'N/A')}"""
+                report_text += f"""- Auto-generated PR: {patch_result.get('pr_url', 'N/A')}
+- Files Modified: {len(patch_result.get('patch_data', {}).get('filesToUpdate', []))}
+- Summary of Changes: {patch_result.get('patch_data', {}).get('summaryOfChanges', 'N/A')}"""
             else:
                 report_text += f"""- **Status:** {patch_result.get('pr_url', 'N/A')}
-- **Reason:** Complexity too high or no patches generated"""
+- Reason: Complexity too high or no patches generated"""
                 
                 # Show patch summary even if PR wasn't created
                 patch_data = patch_result.get('patch_data', {})
                 if patch_data.get('filesToUpdate'):
                     report_text += f"""
-- **Potential Changes:** {len(patch_data.get('filesToUpdate', []))} files identified
-- **Summary:** {patch_data.get('summaryOfChanges', 'N/A')}"""
+- Potential Changes: {len(patch_data.get('filesToUpdate', []))} files identified
+- Summary: {patch_data.get('summaryOfChanges', 'N/A')}"""
         elif args.no_patches:
             report_text += """
 
-**Patch Generation:** Skipped (--no-patches flag)"""
+Patch Generation: Skipped (--no-patches flag)"""
         else:
             report_text += """
 
-**Patch Generation:** Disabled or failed"""
+Patch Generation: Disabled or failed"""
 
         report_text += """
 

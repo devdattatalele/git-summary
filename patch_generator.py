@@ -22,7 +22,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # Chroma configuration
-CHROMA_PERSIST_DIR = "chroma_db"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 
 # Validate required environment variables
 required_vars = {

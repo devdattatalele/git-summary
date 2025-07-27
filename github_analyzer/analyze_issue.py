@@ -41,7 +41,7 @@ COLLECTION_ISSUES = "issues_history"
 
 # Patch generator configuration
 ENABLE_PATCH_GENERATION = os.getenv("ENABLE_PATCH_GENERATION", "true").lower() == "true"
-MAX_COMPLEXITY_FOR_AUTO_PR = int(os.getenv("MAX_COMPLEXITY_FOR_AUTO_PR", "2"))
+MAX_COMPLEXITY_FOR_AUTO_PR = int(os.getenv("MAX_COMPLEXITY_FOR_AUTO_PR", "4"))
 
 # Validate required environment variables
 required_vars = {
@@ -121,7 +121,13 @@ def create_langchain_agent(issue):
     """Creates and runs the LangChain agent to analyze the issue."""
     print("Initializing LangChain Agent...")
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2, google_api_key=GOOGLE_API_KEY)
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", 
+            temperature=0.2, 
+            google_api_key=GOOGLE_API_KEY,
+            max_retries=2,  # Reduce retries to avoid long waits
+            request_timeout=30  # Shorter timeout
+        )
         retriever_tool = initialize_chroma_retriever()
         tools = [retriever_tool]
 
@@ -144,15 +150,13 @@ def create_langchain_agent(issue):
         Thought: I now know the final answer
         Final Answer: the final answer to the original input question
 
-        First, use the 'github_knowledge_base_search' tool to search for any documentation or past issues that are relevant to the new issue's title and body. Search multiple times with different keywords if needed to get comprehensive context.
-
-        Based on the new issue and the retrieved context, provide a comprehensive analysis.
-        
         IMPORTANT: Your Final Answer MUST be a valid JSON object with exactly these keys:
         1. "summary": A concise, one-sentence summary of the user's problem.
-        2. "proposed_solution": A detailed step-by-step technical plan to solve the issue. This should contain a list of steps to solve the issue including the file name and its directory and line number which needs to be updated with problem description and the solution. If the context contains a similar solved issue, reference it and adapt the solution. Use newline characters for formatting.
+        2. "proposed_solution": A detailed step-by-step technical plan to solve the issue. This should contain specific file paths, directory locations, and line numbers that need to be updated, along with the problem description and the solution. If the context contains a similar solved issue, reference it and adapt the solution. Use newline characters for formatting.
         3. "complexity": An integer from 1 to 5 (1=Trivial, 5=Very Complex).
         4. "similar_issues": An array of strings containing the source of any relevant past issues from the context (e.g., ["issue #123", "issue #456"]). If no relevant issues are found, return an empty array [].
+
+        First, search the knowledge base for relevant context, then provide your analysis.
 
         New Issue Details:
         - Repository: {repo_full_name}
@@ -171,7 +175,7 @@ def create_langchain_agent(issue):
             agent=agent, 
             tools=tools, 
             verbose=True,
-            max_iterations=10,
+            max_iterations=8,  # Reduced to save API calls
             handle_parsing_errors=True
         )
 
@@ -184,44 +188,185 @@ def create_langchain_agent(issue):
         })
         
         return response['output']
+        
     except Exception as e:
+        error_message = str(e)
+        
+        # Handle rate limit specifically
+        if "429" in error_message or "quota" in error_message.lower():
+            print("⚠️ Google API rate limit exceeded. Using fallback analysis...")
+            return create_fallback_analysis(issue)
+        
+        # Handle other errors
+        print(f"Agent error: {error_message}")
         raise Exception(f"Failed to run LangChain agent: {e}")
+
+def create_fallback_analysis(issue):
+    """Create a basic analysis without LLM when rate limits are hit."""
+    print("Creating fallback analysis based on issue content...")
+    
+    title = issue.title.lower()
+    body = (issue.body or "").lower()
+    combined_text = f"{title} {body}"
+    
+    # Basic keyword analysis
+    complexity = 3  # Default
+    if any(word in combined_text for word in ["streaming", "tool", "agent", "callback"]):
+        complexity = 4
+    if any(word in combined_text for word in ["bug", "error", "crash", "fail"]):
+        complexity += 1
+    if any(word in combined_text for word in ["simple", "easy", "typo", "documentation"]):
+        complexity = max(1, complexity - 1)
+    
+    complexity = min(5, max(1, complexity))
+    
+    # Extract key information from issue
+    summary = f"Issue in {issue.repository.full_name}: {issue.title}"
+    
+    # Basic solution template based on common patterns
+    if "streaming" in combined_text and "tool" in combined_text:
+        proposed_solution = """Based on the issue description, this appears to be a streaming compatibility problem with agent tools. Common solutions include:
+
+1. **Check Agent Configuration:**
+   - File: `swarms/structs/agent.py` (or similar agent implementation file)
+   - Look for streaming_on parameter and tool execution methods
+   - Ensure tools are compatible with streaming mode
+
+2. **Review Tool Execution Logic:**
+   - File: Agent's tool execution methods (typically `_execute_tool` or `execute_tools`)
+   - Add proper error handling for streaming scenarios
+   - Implement tool logging as requested
+
+3. **Add Logging Implementation:**
+   - Import logging module
+   - Add log statements for tool execution start, success, and errors
+   - Example: `logger.info(f"Executing tool: {tool_name}, Input: {input_data}")`
+
+4. **Test Streaming Compatibility:**
+   - Create test cases with streaming_on=True
+   - Verify tool calls work properly
+   - Check tool execution logs are generated"""
+    else:
+        proposed_solution = f"""This issue requires investigation of the codebase. Recommended approach:
+
+1. **Identify Related Files:**
+   - Search for files containing keywords from the issue: {', '.join(set(combined_text.split()[:10]))}
+   - Focus on main implementation files and configuration
+
+2. **Debug the Problem:**
+   - Add logging/print statements to trace execution
+   - Identify the exact failure point
+   - Check error logs and stack traces
+
+3. **Implement Fix:**
+   - Based on root cause analysis
+   - Add proper error handling
+   - Include unit tests for the fix
+
+4. **Verify Solution:**
+   - Test the fix thoroughly
+   - Ensure no regressions
+   - Update documentation if needed"""
+    
+    # Try to get some context from the knowledge base without LLM
+    try:
+        retriever_tool = initialize_chroma_retriever()
+        search_results = retriever_tool.invoke({"query": f"{title} {body[:100]}"})
+        if search_results and len(search_results) > 50:
+            similar_issues = ["Context found in knowledge base - similar issues may exist"]
+        else:
+            similar_issues = []
+    except:
+        similar_issues = []
+    
+    fallback_json = {
+        "summary": summary,
+        "proposed_solution": proposed_solution,
+        "complexity": complexity,
+        "similar_issues": similar_issues
+    }
+    
+    # Return as JSON string to match expected format
+    import json
+    return json.dumps(fallback_json, indent=2)
 
 def parse_agent_output(raw_output: str):
     """Extracts and parses the JSON from the agent's raw output string."""
     print("Parsing agent's JSON output...")
+    print(f"Raw output length: {len(raw_output)}")
+    print(f"Raw output preview: {raw_output[:200]}...")
+    
     try:
+        # Handle empty or invalid output
+        if not raw_output or raw_output.strip() == "":
+            print("Empty output received from agent")
+            return {
+                "summary": "Agent returned empty response",
+                "proposed_solution": "Please re-run the analysis or check the issue details",
+                "complexity": 3,
+                "similar_issues": []
+            }
+        
+        # Handle agent timeout message
+        if "Agent stopped due to iteration limit or time limit" in raw_output:
+            print("Agent hit iteration limit")
+            return {
+                "summary": "Analysis timed out due to complexity",
+                "proposed_solution": "The issue requires manual analysis as the automated agent exceeded time limits",
+                "complexity": 5,
+                "similar_issues": []
+            }
+        
         # Try to find JSON block within ```json ... ```
-        match = re.search(r"```json\s*\n([\s\S]*?)\n\s*```", raw_output)
-        if match:
-            json_str = match.group(1).strip()
+        json_match = re.search(r"```json\s*\n([\s\S]*?)\n\s*```", raw_output)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            print(f"Found JSON block: {json_str[:100]}...")
             return json.loads(json_str)
         
         # Try to find JSON block within ``` ... ```
-        match = re.search(r"```\s*\n([\s\S]*?)\n\s*```", raw_output)
-        if match:
-            json_str = match.group(1).strip()
+        json_match = re.search(r"```\s*\n([\s\S]*?)\n\s*```", raw_output)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            print(f"Found code block: {json_str[:100]}...")
             return json.loads(json_str)
         
-        # Try to find JSON object directly
-        match = re.search(r"(\{[\s\S]*\})", raw_output)
-        if match:
-            json_str = match.group(1)
+        # Try to find JSON object directly (look for { ... })
+        json_match = re.search(r"(\{[\s\S]*\})", raw_output)
+        if json_match:
+            json_str = json_match.group(1)
+            print(f"Found JSON object: {json_str[:100]}...")
             return json.loads(json_str)
         
-        # Fallback - try to parse the entire output as JSON
-        return json.loads(raw_output)
+        # Extract from "Final Answer:" section
+        final_answer_match = re.search(r"Final Answer:\s*([\s\S]*?)(?:\n\n|$)", raw_output)
+        if final_answer_match:
+            answer_text = final_answer_match.group(1).strip()
+            print(f"Found Final Answer: {answer_text[:100]}...")
+            # Try to parse as JSON
+            return json.loads(answer_text)
         
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON: {e}")
-        print(f"Raw output was: {raw_output}")
-        # Return a default structure
+        # If no JSON found, create a summary from the text
+        print("No JSON found, creating summary from text")
         return {
-            "summary": "Could not parse agent response",
-            "proposed_solution": "Please review the raw agent output manually",
+            "summary": "Could not parse structured response from agent",
+            "proposed_solution": f"Raw agent output: {raw_output[:500]}...",
             "complexity": 3,
             "similar_issues": []
         }
+        
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {e}")
+        print(f"Attempted to parse: {json_str[:200] if 'json_str' in locals() else 'No JSON string found'}...")
+        
+        # Return a default structure with some extracted info
+        return {
+            "summary": "Could not parse agent response as JSON",
+            "proposed_solution": f"Agent provided response but JSON parsing failed. Raw output: {raw_output[:300]}...",
+            "complexity": 3,
+            "similar_issues": []
+        }
+
 
 def generate_patches_for_issue(issue, analysis):
     """Generate patches for the issue if conditions are met."""

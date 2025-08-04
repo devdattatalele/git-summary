@@ -22,7 +22,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # Chroma configuration
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Determine project root and Chroma DB directory
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
 
 # Validate required environment variables
@@ -145,11 +146,13 @@ def generate_patch_for_issue(issue_body: str, repo_full_name: str = None) -> Dic
         # Format context for LLM
         context_text = format_context_for_llm(pr_context, code_context)
         
-        # Initialize LLM
+        # Initialize LLM with rate limit handling
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash-latest", 
+            model="gemini-2.5-flash", 
             temperature=0.1, 
-            google_api_key=GOOGLE_API_KEY
+            google_api_key=GOOGLE_API_KEY,
+            max_retries=2,  # Reduce retries
+            request_timeout=30  # Shorter timeout
         )
         
         # Construct the prompt
@@ -190,8 +193,18 @@ Rules for patch generation:
 
 Generate the patches now:"""
 
-        # Get LLM response
-        response = llm.invoke(prompt)
+        # Get LLM response with error handling
+        try:
+            response = llm.invoke(prompt)
+        except Exception as e:
+            error_message = str(e)
+            if "429" in error_message or "quota" in error_message.lower():
+                print("⚠️ Google API rate limit exceeded for patch generation")
+                return {
+                    "filesToUpdate": [],
+                    "summaryOfChanges": "Patch generation skipped due to API rate limits. Please try again later or resolve manually."
+                }
+            raise e
         
         # Parse JSON response
         try:
@@ -399,7 +412,7 @@ def apply_simple_patch(content: str, patch: str) -> str:
 # --- Main Functions for Integration ---
 
 def generate_and_create_pr(issue_body: str, repo_full_name: str, issue_number: int = None, 
-                          complexity: int = 5, max_complexity: int = 2) -> Dict[str, Any]:
+                          complexity: int = 5, max_complexity: int = 4) -> Dict[str, Any]:
     """
     Main function to generate patches and create PR.
     
@@ -434,20 +447,4 @@ def generate_and_create_pr(issue_body: str, repo_full_name: str, issue_number: i
         "created_pr": pr_url.startswith("https://") if pr_url else False
     }
 
-if __name__ == "__main__":
-    # Example usage
-    test_issue = """
-    The login button is not working properly. When users click it, 
-    nothing happens. This seems to be a JavaScript event handler issue
-    in the authentication component.
-    """
-    
-    result = generate_and_create_pr(
-        issue_body=test_issue,
-        repo_full_name="example/repo",
-        issue_number=123,
-        complexity=2
-    )
-    
-    print("Patch Generation Result:")
-    print(json.dumps(result, indent=2)) 
+# The main execution block is removed to convert this file into a library module. 

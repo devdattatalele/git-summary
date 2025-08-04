@@ -482,8 +482,8 @@ def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
                 total_documents_stored += len(sub_batch)
             except Exception as e:
                 print(f"Error adding batch to Chroma: {e}")
-                continue
-    
+            continue
+            
     # Note: Chroma automatically persists to disk when using persist_directory
     
     print(f"Finished {collection_name}. Total documents stored: {total_documents_stored}")
@@ -491,77 +491,5 @@ def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
 
 
 # --- MAIN EXECUTION ---
-def main():
-    parser = argparse.ArgumentParser(description="Ingest a GitHub repository's docs, code, issues, and PRs into Chroma collections.")
-    parser.add_argument("repo_name", type=str, help="The GitHub repository in 'owner/repo' format.")
-    parser.add_argument("--skip-prs", action="store_true", help="Skip PR history ingestion (faster)")
-    parser.add_argument("--skip-code", action="store_true", help="Skip code analysis (faster)")
-    args = parser.parse_args()
-
-    print("--- Starting GitHub Knowledge Base Ingestion with Chroma Collections ---")
-    
-    github_client, embeddings = initialize_clients()
-    
-    try:
-        repo = github_client.get_repo(args.repo_name)
-        print(f"Successfully connected to repository: {repo.full_name}")
-    except Exception as e:
-        print(f"Could not access repository {args.repo_name}. Check the name and your GITHUB_TOKEN. Error: {e}")
-        return
-
-    # Create persist directory if it doesn't exist
-    os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
-    
-    total_stored = 0
-    
-    # Fetch and process different types of data into their respective collections
-    
-    # 1. Documentation
-    print("\n=== Processing Documentation ===")
-    docs = fetch_repo_docs(repo.full_name)
-    if docs:
-        stored = chunk_and_embed_and_store(docs, embeddings, COLLECTION_DOCS)
-        total_stored += stored
-    
-    # 2. Issues
-    print("\n=== Processing Issues ===")
-    issues = fetch_repo_issues(repo)
-    if issues:
-        stored = chunk_and_embed_and_store(issues, embeddings, COLLECTION_ISSUES)
-        total_stored += stored
-    
-    # 3. Code (optional)
-    if not args.skip_code:
-        print("\n=== Processing Code ===")
-        code_chunks = fetch_repo_code(repo.full_name)
-        if code_chunks:
-            stored = chunk_and_embed_and_store(code_chunks, embeddings, COLLECTION_REPO_CODE)
-            total_stored += stored
-    else:
-        print("Skipping code analysis (--skip-code flag)")
-    
-    # 4. PR History (optional)
-    if not args.skip_prs:
-        print("\n=== Processing PR History ===")
-        pr_history = fetch_repo_pr_history(repo)
-        if pr_history:
-            stored = chunk_and_embed_and_store(pr_history, embeddings, COLLECTION_PR_HISTORY)
-            total_stored += stored
-    else:
-        print("Skipping PR history (--skip-prs flag)")
-
-    print("\n--- Ingestion Complete ---")
-    print(f"Total documents stored across all collections: {total_stored}")
-    print(f"Chroma database persisted to: {CHROMA_PERSIST_DIR}")
-    
-    # Print collection information
-    collections = [COLLECTION_DOCS, COLLECTION_ISSUES]
-    if not args.skip_code:
-        collections.append(COLLECTION_REPO_CODE)
-    if not args.skip_prs:
-        collections.append(COLLECTION_PR_HISTORY)
-    
-    print(f"\nCreated collections: {collections}")
-
-if __name__ == "__main__":
-    main()
+# The main execution block is removed to convert this file into a library module.
+# The functionality will be invoked from the main server or a dedicated script.

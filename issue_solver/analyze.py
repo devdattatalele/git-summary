@@ -23,7 +23,7 @@ from googleapiclient.discovery import build
 # --- Patch Generator Import ---
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from patch_generator import generate_and_create_pr
+from .patch import generate_and_create_pr
 
 # --- Configuration ---
 load_dotenv()
@@ -436,99 +436,5 @@ def append_to_google_doc(text_to_append: str):
         print(text_to_append)
 
 # --- Main Execution ---
-def main():
-    parser = argparse.ArgumentParser(description="Analyze a GitHub issue and summarize it in a Google Doc.")
-    parser.add_argument("issue_url", type=str, help="The full URL of the GitHub issue to analyze.")
-    parser.add_argument("--no-patches", action="store_true", help="Skip patch generation")
-    args = parser.parse_args()
-
-    try:
-        print("--- Starting GitHub Issue Analysis ---")
-        
-        # 1. Get Issue Details
-        owner, repo, issue_number = parse_github_url(args.issue_url)
-        issue = get_github_issue(owner, repo, issue_number)
-        
-        print(f"Analyzing issue: {issue.title}")
-        print(f"Repository: {issue.repository.full_name}")
-
-        # 2. Run Agent to get Analysis
-        agent_raw_output = create_langchain_agent(issue)
-        
-        # 3. Parse the output
-        analysis = parse_agent_output(agent_raw_output)
-        
-        # 4. Generate patches if enabled and not skipped
-        patch_result = None
-        if not args.no_patches:
-            patch_result = generate_patches_for_issue(issue, analysis)
-        
-        # 5. Format the final report
-        report_text = f"""---
-### Issue #{issue.number}: {issue.title}
-- Repository: {issue.repository.full_name}
-- Link: {issue.html_url}
-- Analyzed On: {datetime.now().strftime('%d %B, %Y at %H:%M')}
-- Status: {issue.state}
-
-| Category            | AI Analysis                                                  |
-| ------------------- | ------------------------------------------------------------ |
-| Summary         | {analysis.get('summary', 'N/A')}                             |
-| Complexity      | {analysis.get('complexity', 'N/A')} / 5                      |
-| Similar Issues  | {', '.join(analysis.get('similar_issues', [])) or 'None Found'} |
-
-Proposed Solution
-{analysis.get('proposed_solution', 'N/A')}"""
-
-        # Add patch generation results if available
-        if patch_result:
-            report_text += f"""
-
-Patch Generation Results:
-"""
-            if patch_result.get('created_pr'):
-                report_text += f"""- Auto-generated PR: {patch_result.get('pr_url', 'N/A')}
-- Files Modified: {len(patch_result.get('patch_data', {}).get('filesToUpdate', []))}
-- Summary of Changes: {patch_result.get('patch_data', {}).get('summaryOfChanges', 'N/A')}"""
-            else:
-                report_text += f"""- **Status:** {patch_result.get('pr_url', 'N/A')}
-- Reason: Complexity too high or no patches generated"""
-                
-                # Show patch summary even if PR wasn't created
-                patch_data = patch_result.get('patch_data', {})
-                if patch_data.get('filesToUpdate'):
-                    report_text += f"""
-- Potential Changes: {len(patch_data.get('filesToUpdate', []))} files identified
-- Summary: {patch_data.get('summaryOfChanges', 'N/A')}"""
-        elif args.no_patches:
-            report_text += """
-
-Patch Generation: Skipped (--no-patches flag)"""
-        else:
-            report_text += """
-
-Patch Generation: Disabled or failed"""
-
-        report_text += """
-
----
-
-"""
-
-        # 6. Append to Google Doc
-        append_to_google_doc(report_text)
-        
-        print("--- Analysis Complete ---")
-        print(f"Issue #{issue.number} has been analyzed and documented.")
-        
-        if patch_result and patch_result.get('created_pr'):
-            print(f"🎉 Auto-generated PR created: {patch_result.get('pr_url')}")
-        elif patch_result:
-            print(f"ℹ️ Patch generation result: {patch_result.get('pr_url')}")
-
-    except Exception as e:
-        print(f"An error occurred during the process: {e}")
-        return 1
-
-if __name__ == "__main__":
-    exit(main())
+# The main execution block is removed to convert this file into a library module.
+# The functionality will be invoked from the main server or a dedicated script.

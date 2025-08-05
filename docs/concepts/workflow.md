@@ -2,7 +2,7 @@
 
 The GitHub Issue Solver automates the process of resolving issues through a structured, multi-stage workflow.
 
-![Workflow Diagram](assets/workflow.png)
+![Workflow Diagram](../assets/workflow.png)
 
 ### 1. Ingestion
 

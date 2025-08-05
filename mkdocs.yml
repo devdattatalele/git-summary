@@ -61,6 +61,9 @@ nav:
     - 'Patch': 'api_reference/patch.md'
     - 'Server': 'api_reference/server.md'
 
+extra_files:
+  - assets
+
 plugins:
   - search
   - macros 

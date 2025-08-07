@@ -44,8 +44,8 @@ A comprehensive **Model Context Protocol (MCP) server** that enables AI agents t
 ### 1. Installation
 
 ```bash
-git clone https://github.com/your-username/github-issue-mcp-server.git
-cd github-issue-mcp-server
+git clone https://github.com/devdattatalele//git-summary.git
+cd git-summary
 
 # Install dependencies
 pip install -r requirements.txt

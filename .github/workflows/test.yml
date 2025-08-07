@@ -1,0 +1,127 @@
+name: Test MCP Server
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio
+
+    - name: Set up test environment
+      run: |
+        cp env.template .env
+        echo "GITHUB_TOKEN=fake_token" >> .env
+        echo "GOOGLE_API_KEY=fake_key" >> .env
+
+    - name: Run basic tests
+      run: |
+        python -m pytest tests/ -v
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+    - name: Test MCP server startup
+      run: |
+        python test_mcp_server.py
+      env:
+        GITHUB_TOKEN: fake_token
+        GOOGLE_API_KEY: fake_key
+
+    - name: Test setup script
+      run: |
+        python setup_mcp_server.py --test
+      env:
+        GITHUB_TOKEN: fake_token
+        GOOGLE_API_KEY: fake_key
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black mypy
+
+    - name: Lint with flake8
+      run: |
+        flake8 github_issue_mcp_server.py issue_solver/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 github_issue_mcp_server.py issue_solver/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Check code formatting with black
+      run: |
+        black --check github_issue_mcp_server.py issue_solver/
+
+    - name: Type check with mypy
+      run: |
+        mypy github_issue_mcp_server.py --ignore-missing-imports
+      continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+
+    - name: Run security scan with bandit
+      run: |
+        bandit -r github_issue_mcp_server.py issue_solver/ -f json -o bandit-report.json
+      continue-on-error: true
+
+    - name: Check dependencies with safety
+      run: |
+        safety check --json --output safety-report.json
+      continue-on-error: true
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json

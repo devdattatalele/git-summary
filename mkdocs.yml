@@ -1,10 +1,10 @@
-site_name: "GitHub Issue Solver"
-site_description: "An AI-powered system to analyze and resolve GitHub issues."
-site_author: "Your Name"
-site_url: "https://your-repo-url.com/"
+site_name: "GitHub Issue Resolution MCP Server"
+site_description: "A comprehensive Model Context Protocol server for AI-powered GitHub issue analysis and resolution using advanced RAG techniques."
+site_author: "GitHub Issue MCP Team"
+site_url: "https://devdattatalele.github.io/github-issue-mcp-server/"
 
-repo_name: "your-github/issue-solver"
-repo_url: "https://github.com/your-github/issue-solver"
+repo_name: "devdattatalele/github-issue-mcp-server"
+repo_url: "https://github.com/devdattatalele/github-issue-mcp-server"
 
 theme:
   name: material
@@ -44,25 +44,40 @@ markdown_extensions:
 
 nav:
   - Home: 'index.md'
-  - 'Core Concepts':
-    - 'Workflow': 'concepts/workflow.md'
-    - 'Architecture': 'concepts/architecture.md'
   - 'Getting Started':
+    - 'Quick Start': 'getting_started/quickstart.md'
     - 'Installation': 'getting_started/installation.md'
     - 'Configuration': 'getting_started/configuration.md'
-  - 'Usage':
-    - 'Ingesting a Repository': 'usage/ingestion.md'
-    - 'Analyzing an Issue': 'usage/analysis.md'
-    - 'Generating Patches': 'usage/patching.md'
-    - 'Running the Client': 'usage/client.md'
+    - 'Claude Desktop Setup': 'getting_started/claude_setup.md'
+  - 'Core Concepts':
+    - 'MCP Overview': 'concepts/mcp_overview.md'
+    - 'Architecture': 'concepts/architecture.md'
+    - 'RAG System': 'concepts/rag_system.md'
+    - 'Workflow': 'concepts/workflow.md'
+  - 'Usage Guide':
+    - 'Repository Ingestion': 'usage/ingestion.md'
+    - 'Issue Analysis': 'usage/analysis.md'
+    - 'Patch Generation': 'usage/patching.md'
+    - 'Multi-Repository': 'usage/multi_repo.md'
+    - 'Advanced Features': 'usage/advanced.md'
   - 'API Reference':
-    - 'Analyze': 'api_reference/analyze.md'
-    - 'Ingest': 'api_reference/ingest.md'
-    - 'Patch': 'api_reference/patch.md'
-    - 'Server': 'api_reference/server.md'
-
-extra_files:
-  - assets
+    - 'MCP Server': 'api_reference/server.md'
+    - 'Ingest Module': 'api_reference/ingest.md'
+    - 'Analyze Module': 'api_reference/analyze.md'
+    - 'Patch Module': 'api_reference/patch.md'
+    - 'Tools Reference': 'api_reference/tools.md'
+  - 'Examples':
+    - 'Basic Usage': 'examples/basic_usage.md'
+    - 'Advanced Workflows': 'examples/advanced_workflows.md'
+    - 'Integration Examples': 'examples/integrations.md'
+  - 'Troubleshooting':
+    - 'Common Issues': 'troubleshooting/common_issues.md'
+    - 'Performance': 'troubleshooting/performance.md'
+    - 'Debugging': 'troubleshooting/debugging.md'
+  - 'Contributing':
+    - 'Development Guide': 'contributing/development.md'
+    - 'Testing': 'contributing/testing.md'
+    - 'Documentation': 'contributing/documentation.md'
 
 plugins:
   - search

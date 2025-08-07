@@ -7,9 +7,20 @@ import subprocess
 import shutil
 import ast
 import re
+import logging
+import sys
+import asyncio
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
+
+# Configure logging for this module
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stderr)]
+)
+logger = logging.getLogger(__name__)
 from github import Github, RateLimitExceededException
 from langchain_chroma import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -27,9 +38,8 @@ load_dotenv()
 GEMINI_EMBEDDING_MODEL = "models/embedding-001"
 
 # Chroma configuration
-#CHROMA_PERSIST_DIR = "chroma_db"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", os.path.abspath(os.path.join(PROJECT_ROOT, "chroma_db")))
 
 # Collection configuration (replaces Pinecone namespaces)
 COLLECTION_ISSUES = "issues_history"
@@ -120,7 +130,7 @@ def extract_functions_from_code(file_content: str, file_path: str) -> List[Dict[
             })
             
     except Exception as e:
-        print(f"Error parsing functions from {file_path}: {e}")
+        logger.error(f"Error parsing functions from {file_path}: {e}")
         # Fallback to whole file
         functions.append({
             "name": os.path.basename(file_path),
@@ -132,12 +142,19 @@ def extract_functions_from_code(file_content: str, file_path: str) -> List[Dict[
     
     return functions
 
-def fetch_repo_code(repo_full_name: str):
+async def fetch_repo_code(repo_full_name: str):
     """
     Clones the repository and extracts code files with function-level chunking.
+    Uses async processing to prevent timeouts.
     """
-    print("Cloning repository for code analysis...")
-    temp_dir = f"./temp_clone_{repo_full_name.replace('/', '_')}"
+    logger.info("Cloning repository for code analysis...")
+    
+    # Use system temp directory to avoid permission issues
+    import tempfile
+    temp_base_dir = tempfile.mkdtemp(prefix=f"mcp_clone_{repo_full_name.replace('/', '_')}_")
+    temp_dir = os.path.join(temp_base_dir, "repo")
+    
+    logger.info(f"Using temporary directory: {temp_base_dir}")
     
     # Remove the directory if it exists from a previous failed run
     if os.path.exists(temp_dir):
@@ -155,9 +172,9 @@ def fetch_repo_code(repo_full_name: str):
             capture_output=True,
             text=True
         )
-        print("Repository cloned successfully.")
+        logger.info("Repository cloned successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"Failed to clone repository: {e.stderr}")
+        logger.warning(f"Failed to clone repository: {e.stderr}")
         # Attempt to clone without token for public repos if the above failed
         try:
             clone_url = f"https://github.com/{repo_full_name}.git"
@@ -168,21 +185,36 @@ def fetch_repo_code(repo_full_name: str):
                 text=True
             )
         except subprocess.CalledProcessError as e2:
-            print(f"Failed to clone public repository: {e2.stderr}")
-            shutil.rmtree(temp_dir)
+            logger.warning(f"Failed to clone public repository: {e2.stderr}")
+            if os.path.exists(temp_base_dir):
+                shutil.rmtree(temp_base_dir)
             return []
 
-    print("Extracting code files from local clone...")
+    logger.info("Extracting code files from local clone...")
     code_chunks = []
     
     # Define code file extensions
     code_extensions = ['.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c', '.h', '.cs', '.php', '.rb', '.go', '.rs', '.swift']
     
-    # Use os.walk to efficiently traverse the local directory
+    # Collect all code files first
+    code_files = []
     for root, _, files in os.walk(temp_dir):
         for file in files:
             if any(file.endswith(ext) for ext in code_extensions):
                 file_path = os.path.join(root, file)
+                code_files.append(file_path)
+    
+    logger.info(f"Found {len(code_files)} code files to process...")
+    
+    # Process files in batches with progress reporting
+    batch_size = 10  # Process 10 files at a time
+    processed_count = 0
+    
+    try:
+        for i in range(0, len(code_files), batch_size):
+            batch = code_files[i:i+batch_size]
+            
+            for file_path in batch:
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
@@ -205,24 +237,40 @@ def fetch_repo_code(repo_full_name: str):
                             "start_line": func["start_line"],
                             "end_line": func["end_line"]
                         })
+                    
+                    processed_count += 1
                         
                 except Exception as e:
-                    print(f"Could not read file {file_path}: {e}")
-
-    # Clean up the temporary directory
-    shutil.rmtree(temp_dir)
+                    logger.warning(f"Could not read file {file_path}: {e}")
+                    processed_count += 1
+            
+            # Log progress and yield control back to event loop
+            logger.info(f"Processed {processed_count}/{len(code_files)} code files...")
+            await asyncio.sleep(0)  # Yield control to prevent timeout
+            
+    except Exception as e:
+        logger.error(f"Error during code processing: {e}")
+    finally:
+        # Clean up the temporary directory
+        if os.path.exists(temp_base_dir):
+            shutil.rmtree(temp_base_dir)
     
-    print(f"Found and processed {len(code_chunks)} code chunks.")
+    logger.info(f"Found and processed {len(code_chunks)} code chunks from {processed_count} files.")
     return code_chunks
 
-def fetch_repo_docs(repo_full_name: str):
+async def fetch_repo_docs(repo_full_name: str):
     """
     Clones the repository to a temporary local directory and extracts all
-    Markdown and text files. This is much faster than using the API for
-    repositories with many files.
+    Markdown and text files. Uses async processing to prevent timeouts.
     """
-    print("Cloning repository for faster file access...")
-    temp_dir = f"./temp_clone_{repo_full_name.replace('/', '_')}"
+    logger.info("Cloning repository for faster file access...")
+    
+    # Use system temp directory to avoid permission issues
+    import tempfile
+    temp_base_dir = tempfile.mkdtemp(prefix=f"mcp_docs_{repo_full_name.replace('/', '_')}_")
+    temp_dir = os.path.join(temp_base_dir, "repo")
+    
+    logger.info(f"Using temporary directory: {temp_base_dir}")
     
     # Remove the directory if it exists from a previous failed run
     if os.path.exists(temp_dir):
@@ -240,9 +288,9 @@ def fetch_repo_docs(repo_full_name: str):
             capture_output=True,
             text=True
         )
-        print("Repository cloned successfully.")
+        logger.info("Repository cloned successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"Failed to clone repository: {e.stderr}")
+        logger.warning(f"Failed to clone repository: {e.stderr}")
         # Attempt to clone without token for public repos if the above failed
         try:
             clone_url = f"https://github.com/{repo_full_name}.git"
@@ -253,18 +301,33 @@ def fetch_repo_docs(repo_full_name: str):
                 text=True
             )
         except subprocess.CalledProcessError as e2:
-            print(f"Failed to clone public repository: {e2.stderr}")
-            shutil.rmtree(temp_dir) # Clean up
+            logger.warning(f"Failed to clone public repository: {e2.stderr}")
+            if os.path.exists(temp_base_dir):
+                shutil.rmtree(temp_base_dir)
             return []
 
-
-    print("Extracting documentation files (.md, .txt) from local clone...")
+    logger.info("Extracting documentation files (.md, .txt) from local clone...")
     docs = []
-    # Use os.walk to efficiently traverse the local directory
+    
+    # Collect all documentation files first
+    doc_files = []
     for root, _, files in os.walk(temp_dir):
         for file in files:
             if file.endswith((".md", ".txt", "README")):
                 file_path = os.path.join(root, file)
+                doc_files.append(file_path)
+    
+    logger.info(f"Found {len(doc_files)} documentation files to process...")
+    
+    # Process files in batches with progress reporting
+    batch_size = 20  # Process 20 files at a time for docs
+    processed_count = 0
+    
+    try:
+        for i in range(0, len(doc_files), batch_size):
+            batch = doc_files[i:i+batch_size]
+            
+            for file_path in batch:
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
@@ -272,18 +335,29 @@ def fetch_repo_docs(repo_full_name: str):
                     # Get the relative path to use as the source identifier
                     relative_path = os.path.relpath(file_path, temp_dir)
                     docs.append({"source": relative_path, "content": content, "type": "doc"})
+                    processed_count += 1
+                    
                 except Exception as e:
-                    print(f"Could not read file {file_path}: {e}")
-
-    # Clean up the temporary directory
-    shutil.rmtree(temp_dir)
+                    logger.warning(f"Could not read file {file_path}: {e}")
+                    processed_count += 1
+            
+            # Log progress and yield control back to event loop
+            logger.info(f"Processed {processed_count}/{len(doc_files)} documentation files...")
+            await asyncio.sleep(0)  # Yield control to prevent timeout
+            
+    except Exception as e:
+        logger.error(f"Error during documentation processing: {e}")
+    finally:
+        # Clean up the temporary directory
+        if os.path.exists(temp_base_dir):
+            shutil.rmtree(temp_base_dir)
     
-    print(f"Found and processed {len(docs)} documentation files.")
+    logger.info(f"Found and processed {len(docs)} documentation files from {processed_count} files.")
     return docs
 
-def fetch_repo_pr_history(repo):
+def fetch_repo_pr_history(repo, max_prs=50):
     """Fetches merged pull request history with diffs."""
-    print("Fetching pull request history...")
+    logger.info(f"Fetching pull request history (max: {max_prs})...")
     pr_data = []
     
     try:
@@ -292,7 +366,8 @@ def fetch_repo_pr_history(repo):
         
         count = 0
         for pr in tqdm(prs, desc="Fetching PR history"):
-            if count >= 100:  # Limit to recent 100 PRs to avoid rate limits
+            if count >= max_prs:  # Apply user-specified limit
+                logger.info(f"Reached maximum PR limit ({max_prs}), stopping...")
                 break
                 
             if pr.merged:
@@ -319,13 +394,13 @@ def fetch_repo_pr_history(repo):
                     count += 1
                     
                 except Exception as e:
-                    print(f"Error fetching PR #{pr.number}: {e}")
+                    logger.warning(f"Error fetching PR #{pr.number}: {e}")
                     continue
                     
     except Exception as e:
-        print(f"Error fetching PR history: {e}")
+        logger.error(f"Error fetching PR history: {e}")
     
-    print(f"Found {len(pr_data)} merged PRs.")
+    logger.info(f"Found {len(pr_data)} merged PRs.")
     return pr_data
 
 
@@ -353,22 +428,29 @@ def initialize_clients():
 
         return g, embeddings
     except Exception as e:
-        print(f"Error during client initialization: {e}")
+        logger.error(f"Error during client initialization: {e}")
         exit()
 
-def create_chroma_collection(embeddings, collection_name: str):
-    """Create or get a Chroma collection."""
-    print(f"Creating/connecting to Chroma collection: {collection_name}")
+def create_chroma_collection(embeddings, collection_name: str, repo_name: str = None):
+    """Create or get a Chroma collection with repository-specific naming."""
+    if repo_name:
+        # Create repository-specific collection name
+        safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
+        full_collection_name = f"{safe_repo_name}_{collection_name}"
+    else:
+        full_collection_name = collection_name
+    
+    logger.info(f"Creating/connecting to Chroma collection: {full_collection_name}")
     return Chroma(
         embedding_function=embeddings,
         persist_directory=CHROMA_PERSIST_DIR,
-        collection_name=collection_name
+        collection_name=full_collection_name
     )
 
 # --- DATA FETCHING ---
 def fetch_repo_docs_api(repo):
     """Fetches all Markdown and text files from the repository using GitHub API."""
-    print("Fetching documentation files (.md, .txt) from the repository...")
+    logger.info("Fetching documentation files (.md, .txt) from the repository...")
     docs = []
     contents = repo.get_contents("")
     while contents:
@@ -382,40 +464,53 @@ def fetch_repo_docs_api(repo):
                     content = file_content.decoded_content.decode("utf-8")
                     docs.append({"source": file_content.path, "content": content, "type": "doc"})
                 except Exception as e:
-                    print(f"Could not decode file {file_content.path}: {e}")
-    print(f"Found {len(docs)} documentation files.")
+                    logger.warning(f"Could not decode file {file_content.path}: {e}")
+    logger.info(f"Found {len(docs)} documentation files.")
     return docs
 
-def fetch_repo_issues(repo):
-    """Fetches all open and closed issues from the repository."""
-    print("Fetching all issues (open and closed)...")
+def fetch_repo_issues(repo, max_issues=100):
+    """Fetches open and closed issues from the repository with a limit."""
+    logger.info(f"Fetching issues (max: {max_issues})...")
     issues_data = []
     issues = repo.get_issues(state="all")
+    issue_count = 0
+    
+    # Apply limit for issues as requested
     for issue in tqdm(issues, desc="Fetching issues"):
+        if issue_count >= max_issues:
+            logger.info(f"Reached maximum issue limit ({max_issues}), stopping...")
+            break
+            
         # Combine title, body, and comments for a complete context
-        comments_text = "\n".join([comment.body for comment in issue.get_comments()])
-        full_issue_text = f"Title: {issue.title}\nBody: {issue.body}\nComments:\n{comments_text}"
-        
-        issues_data.append({
-            "source": f"issue #{issue.number}",
-            "content": full_issue_text,
-            "type": "issue"
-        })
-    print(f"Found {len(issues_data)} issues.")
+        try:
+            comments_text = "\n".join([comment.body for comment in issue.get_comments()])
+            full_issue_text = f"Title: {issue.title}\nBody: {issue.body}\nComments:\n{comments_text}"
+            
+            issues_data.append({
+                "source": f"issue #{issue.number}",
+                "content": full_issue_text,
+                "type": "issue"
+            })
+            issue_count += 1
+        except Exception as e:
+            logger.warning(f"Error processing issue #{issue.number}: {e}")
+            issue_count += 1  # Still count it toward the limit
+            
+    logger.info(f"Found {len(issues_data)} issues.")
     return issues_data
 
 # --- PROCESSING & UPSERTING ---
-def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
-    """Chunks documents, creates embeddings, and stores in Chroma collection."""
+async def chunk_and_embed_and_store(documents, embeddings, collection_name: str, repo_name: str = None):
+    """Chunks documents, creates embeddings, and stores in Chroma collection with async processing."""
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     
-    batch_size = 100 # Process in batches to manage memory
+    batch_size = 50  # Smaller batches for better responsiveness
     total_documents_stored = 0
     
-    print(f"Processing {len(documents)} documents for collection '{collection_name}'...")
+    logger.info(f"Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
     
-    # Create/get the Chroma collection
-    chroma_collection = create_chroma_collection(embeddings, collection_name)
+    # Create/get the Chroma collection with repository-specific naming
+    chroma_collection = create_chroma_collection(embeddings, collection_name, repo_name)
     
     for i in tqdm(range(0, len(documents), batch_size), desc=f"Processing {collection_name} in batches"):
         batch_docs = documents[i:i + batch_size]
@@ -424,7 +519,7 @@ def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
         all_metadatas = []
         
         # 1. Chunking and metadata preparation
-        for doc in batch_docs:
+        for doc_idx, doc in enumerate(batch_docs):
             # For code documents, we might want to preserve the full function/class
             if doc.get("type") == "code" and len(doc["content"]) <= 2000:
                 # Don't chunk small code blocks
@@ -461,6 +556,10 @@ def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
                 
                 all_chunks.append(chunk)
                 all_metadatas.append(metadata)
+            
+            # Yield control every 5 documents to prevent timeouts
+            if doc_idx % 5 == 0:
+                await asyncio.sleep(0)
         
         if not all_chunks:
             continue
@@ -471,24 +570,80 @@ def chunk_and_embed_and_store(documents, embeddings, collection_name: str):
             for chunk, metadata in zip(all_chunks, all_metadatas)
         ]
         
-        # 3. Add to Chroma collection in smaller sub-batches
-        sub_batch_size = 50  # Smaller batches to avoid memory issues
+        # 3. Add to Chroma collection in smaller sub-batches with async yielding
+        sub_batch_size = 25  # Even smaller batches for better responsiveness
         for start in range(0, len(langchain_docs), sub_batch_size):
             end = start + sub_batch_size
             sub_batch = langchain_docs[start:end]
             
             try:
-                chroma_collection.add_documents(sub_batch)
+                # Run embedding and storage in thread to avoid blocking event loop
+                logger.info(f"Embedding and storing {len(sub_batch)} documents...")
+                await asyncio.to_thread(chroma_collection.add_documents, sub_batch)
                 total_documents_stored += len(sub_batch)
+                logger.info(f"Stored {len(sub_batch)} documents. Total: {total_documents_stored}")
+                
+                # Yield control after each sub-batch
+                await asyncio.sleep(0)
+                
             except Exception as e:
-                print(f"Error adding batch to Chroma: {e}")
-            continue
+                logger.error(f"Error adding batch to Chroma: {e}")
+                continue
             
     # Note: Chroma automatically persists to disk when using persist_directory
     
-    print(f"Finished {collection_name}. Total documents stored: {total_documents_stored}")
+    logger.info(f"Finished {collection_name}. Total documents stored: {total_documents_stored}")
     return total_documents_stored
 
+
+# --- VALIDATION & STATS ---
+def validate_repo_exists(repo_name: str) -> bool:
+    """Validate that a GitHub repository exists and is accessible."""
+    try:
+        github_client, _ = initialize_clients()
+        repo = github_client.get_repo(repo_name)
+        return True
+    except Exception as e:
+        logger.error(f"Repository validation failed: {e}")
+        return False
+
+def get_repo_stats(repo_name: str) -> Dict[str, Any]:
+    """Get statistics for an ingested repository."""
+    try:
+        # Initialize embeddings to access ChromaDB
+        _, embeddings = initialize_clients()
+        
+        # Get stats for each collection
+        collections_stats = {}
+        collections = [COLLECTION_DOCS, COLLECTION_ISSUES, COLLECTION_REPO_CODE, COLLECTION_PR_HISTORY]
+        
+        for collection_name in collections:
+            try:
+                vectorstore = create_chroma_collection(embeddings, collection_name)
+                # Try to get collection info - this might not work with all Chroma versions
+                try:
+                    collection = vectorstore._collection
+                    count = collection.count()
+                    collections_stats[collection_name] = {"count": count}
+                except:
+                    # Fallback if direct collection access doesn't work
+                    collections_stats[collection_name] = {"count": "Unknown"}
+            except Exception as e:
+                collections_stats[collection_name] = {"count": 0, "error": str(e)}
+        
+        return {
+            "collections": collections_stats,
+            "total_documents": sum(stats.get("count", 0) for stats in collections_stats.values() if isinstance(stats.get("count"), int)),
+            "last_updated": "Unknown",
+            "status": "Available"
+        }
+    except Exception as e:
+        return {
+            "collections": {},
+            "total_documents": 0,
+            "last_updated": "Unknown", 
+            "status": f"Error: {str(e)}"
+        }
 
 # --- MAIN EXECUTION ---
 # The main execution block is removed to convert this file into a library module.

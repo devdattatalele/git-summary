@@ -5,9 +5,13 @@ import re
 import json
 import tempfile
 import subprocess
+import logging
 from datetime import datetime
 from typing import Dict, List, Any
 from dotenv import load_dotenv
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 from github import Github
 from langchain_chroma import Chroma
@@ -40,7 +44,7 @@ for var_name, var_value in required_vars.items():
 
 def initialize_chroma_clients():
     """Initialize Chroma client and vector stores for both collections."""
-    print("Initializing Chroma clients for patch generation...")
+    logger.info("Initializing Chroma clients for patch generation...")
     try:
         # Check if Chroma database exists
         if not os.path.exists(CHROMA_PERSIST_DIR):
@@ -74,7 +78,7 @@ def initialize_chroma_clients():
 
 def query_vector_stores(issue_body: str, pr_history_store, repo_code_store, k: int = 5):
     """Query both vector stores for relevant context."""
-    print("Querying vector stores for relevant context...")
+    logger.info("Querying vector stores for relevant context...")
     
     try:
         # Query PR history
@@ -134,7 +138,7 @@ def generate_patch_for_issue(issue_body: str, repo_full_name: str = None) -> Dic
     Returns:
         Dictionary with filesToUpdate and summaryOfChanges
     """
-    print("Starting patch generation process...")
+    logger.info("Starting patch generation process...")
     
     try:
         # Initialize vector stores
@@ -199,7 +203,7 @@ Generate the patches now:"""
         except Exception as e:
             error_message = str(e)
             if "429" in error_message or "quota" in error_message.lower():
-                print("⚠️ Google API rate limit exceeded for patch generation")
+                logger.warning("⚠️ Google API rate limit exceeded for patch generation")
                 return {
                     "filesToUpdate": [],
                     "summaryOfChanges": "Patch generation skipped due to API rate limits. Please try again later or resolve manually."
@@ -229,12 +233,12 @@ Generate the patches now:"""
             if "filesToUpdate" not in patch_data or "summaryOfChanges" not in patch_data:
                 raise ValueError("Invalid patch data structure")
             
-            print(f"Generated patches for {len(patch_data['filesToUpdate'])} files")
+            logger.info(f"Generated patches for {len(patch_data['filesToUpdate'])} files")
             return patch_data
             
         except json.JSONDecodeError as e:
-            print(f"Failed to parse LLM response as JSON: {e}")
-            print(f"Raw response: {response_text}")
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Raw response: {response_text}")
             # Return a default structure
             return {
                 "filesToUpdate": [],
@@ -242,7 +246,7 @@ Generate the patches now:"""
             }
     
     except Exception as e:
-        print(f"Error in patch generation: {e}")
+        logger.error(f"Error in patch generation: {e}")
         return {
             "filesToUpdate": [],
             "summaryOfChanges": f"Error during patch generation: {str(e)}"
@@ -263,7 +267,7 @@ def create_pr(patch_data: Dict[str, Any], repo_full_name: str, base_branch: str 
     Returns:
         PR URL if successful, error message if failed
     """
-    print("Creating GitHub PR with generated patches...")
+    logger.info("Creating GitHub PR with generated patches...")
     
     if not patch_data.get("filesToUpdate"):
         return "No patches to apply - PR creation skipped"
@@ -279,7 +283,7 @@ def create_pr(patch_data: Dict[str, Any], repo_full_name: str, base_branch: str 
             issue_ref = f"issue-{issue_number}-" if issue_number else ""
             head_branch = f"auto-patch/{issue_ref}{timestamp}"
         
-        print(f"Creating branch: {head_branch}")
+        logger.info(f"Creating branch: {head_branch}")
         
         # Get the base branch reference
         base_ref = repo.get_branch(base_branch)
@@ -312,12 +316,12 @@ def create_pr(patch_data: Dict[str, Any], repo_full_name: str, base_branch: str 
                         sha=file_obj.sha,
                         branch=head_branch
                     )
-                    print(f"Updated file: {file_path}")
+                    logger.info(f"Updated file: {file_path}")
                 else:
-                    print(f"No changes needed for: {file_path}")
+                    logger.info(f"No changes needed for: {file_path}")
                     
             except Exception as e:
-                print(f"Failed to apply patch to {file_path}: {e}")
+                logger.error(f"Failed to apply patch to {file_path}: {e}")
                 continue
         
         # Create PR
@@ -352,12 +356,12 @@ def create_pr(patch_data: Dict[str, Any], repo_full_name: str, base_branch: str 
             draft=True
         )
         
-        print(f"Successfully created PR: {pr.html_url}")
+        logger.info(f"Successfully created PR: {pr.html_url}")
         return pr.html_url
         
     except Exception as e:
         error_msg = f"Failed to create PR: {e}"
-        print(error_msg)
+        logger.error(error_msg)
         return error_msg
 
 def apply_simple_patch(content: str, patch: str) -> str:
@@ -426,7 +430,7 @@ def generate_and_create_pr(issue_body: str, repo_full_name: str, issue_number: i
     Returns:
         Dict with patch data and PR URL
     """
-    print(f"Processing issue for patch generation (complexity: {complexity})")
+    logger.info(f"Processing issue for patch generation (complexity: {complexity})")
     
     # Generate patches
     patch_data = generate_patch_for_issue(issue_body, repo_full_name)

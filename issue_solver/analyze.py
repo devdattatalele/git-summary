@@ -3,8 +3,12 @@ import os
 import re
 import json
 import argparse
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 from github import Github
 # --- LangChain Imports ---
@@ -68,7 +72,7 @@ def parse_github_url(url: str):
 
 def get_github_issue(owner: str, repo_name: str, issue_number: int):
     """Fetches issue data from GitHub."""
-    print(f"Fetching issue '{owner}/{repo_name}#{issue_number}' from GitHub...")
+    logger.info(f"Fetching issue '{owner}/{repo_name}#{issue_number}' from GitHub...")
     try:
         g = Github(GITHUB_TOKEN)
         repo = g.get_repo(f"{owner}/{repo_name}")
@@ -79,7 +83,7 @@ def get_github_issue(owner: str, repo_name: str, issue_number: int):
 
 def initialize_chroma_retriever():
     """Initializes the Chroma vector store and retriever tool."""
-    print("Initializing Chroma vector store and retriever...")
+    logger.info("Initializing Chroma vector store and retriever...")
     try:
         # Check if Chroma database exists
         if not os.path.exists(CHROMA_PERSIST_DIR):
@@ -95,7 +99,7 @@ def initialize_chroma_retriever():
         )
         
         # Connect to the Chroma collection for issues
-        print(f"Loading Chroma collection: {COLLECTION_ISSUES}")
+        logger.info(f"Loading Chroma collection: {COLLECTION_ISSUES}")
         chroma_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
@@ -119,7 +123,7 @@ def initialize_chroma_retriever():
 
 def create_langchain_agent(issue):
     """Creates and runs the LangChain agent to analyze the issue."""
-    print("Initializing LangChain Agent...")
+    logger.info("Initializing LangChain Agent...")
     try:
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
@@ -179,7 +183,7 @@ def create_langchain_agent(issue):
             handle_parsing_errors=True
         )
 
-        print("Running agent to analyze issue...")
+        logger.info("Running agent to analyze issue...")
         response = agent_executor.invoke({
             "repo_full_name": issue.repository.full_name,
             "issue_title": issue.title,
@@ -194,16 +198,16 @@ def create_langchain_agent(issue):
         
         # Handle rate limit specifically
         if "429" in error_message or "quota" in error_message.lower():
-            print("⚠️ Google API rate limit exceeded. Using fallback analysis...")
+            logger.warning("⚠️ Google API rate limit exceeded. Using fallback analysis...")
             return create_fallback_analysis(issue)
         
         # Handle other errors
-        print(f"Agent error: {error_message}")
+        logger.error(f"Agent error: {error_message}")
         raise Exception(f"Failed to run LangChain agent: {e}")
 
 def create_fallback_analysis(issue):
     """Create a basic analysis without LLM when rate limits are hit."""
-    print("Creating fallback analysis based on issue content...")
+    logger.info("Creating fallback analysis based on issue content...")
     
     title = issue.title.lower()
     body = (issue.body or "").lower()
@@ -292,14 +296,14 @@ def create_fallback_analysis(issue):
 
 def parse_agent_output(raw_output: str):
     """Extracts and parses the JSON from the agent's raw output string."""
-    print("Parsing agent's JSON output...")
-    print(f"Raw output length: {len(raw_output)}")
-    print(f"Raw output preview: {raw_output[:200]}...")
+    logger.info("Parsing agent's JSON output...")
+    logger.info(f"Raw output length: {len(raw_output)}")
+    logger.info(f"Raw output preview: {raw_output[:200]}...")
     
     try:
         # Handle empty or invalid output
         if not raw_output or raw_output.strip() == "":
-            print("Empty output received from agent")
+            logger.warning("Empty output received from agent")
             return {
                 "summary": "Agent returned empty response",
                 "proposed_solution": "Please re-run the analysis or check the issue details",
@@ -309,7 +313,7 @@ def parse_agent_output(raw_output: str):
         
         # Handle agent timeout message
         if "Agent stopped due to iteration limit or time limit" in raw_output:
-            print("Agent hit iteration limit")
+            logger.warning("Agent hit iteration limit")
             return {
                 "summary": "Analysis timed out due to complexity",
                 "proposed_solution": "The issue requires manual analysis as the automated agent exceeded time limits",
@@ -321,33 +325,33 @@ def parse_agent_output(raw_output: str):
         json_match = re.search(r"```json\s*\n([\s\S]*?)\n\s*```", raw_output)
         if json_match:
             json_str = json_match.group(1).strip()
-            print(f"Found JSON block: {json_str[:100]}...")
+            logger.info(f"Found JSON block: {json_str[:100]}...")
             return json.loads(json_str)
         
         # Try to find JSON block within ``` ... ```
         json_match = re.search(r"```\s*\n([\s\S]*?)\n\s*```", raw_output)
         if json_match:
             json_str = json_match.group(1).strip()
-            print(f"Found code block: {json_str[:100]}...")
+            logger.info(f"Found code block: {json_str[:100]}...")
             return json.loads(json_str)
         
         # Try to find JSON object directly (look for { ... })
         json_match = re.search(r"(\{[\s\S]*\})", raw_output)
         if json_match:
             json_str = json_match.group(1)
-            print(f"Found JSON object: {json_str[:100]}...")
+            logger.info(f"Found JSON object: {json_str[:100]}...")
             return json.loads(json_str)
         
         # Extract from "Final Answer:" section
         final_answer_match = re.search(r"Final Answer:\s*([\s\S]*?)(?:\n\n|$)", raw_output)
         if final_answer_match:
             answer_text = final_answer_match.group(1).strip()
-            print(f"Found Final Answer: {answer_text[:100]}...")
+            logger.info(f"Found Final Answer: {answer_text[:100]}...")
             # Try to parse as JSON
             return json.loads(answer_text)
         
         # If no JSON found, create a summary from the text
-        print("No JSON found, creating summary from text")
+        logger.info("No JSON found, creating summary from text")
         return {
             "summary": "Could not parse structured response from agent",
             "proposed_solution": f"Raw agent output: {raw_output[:500]}...",
@@ -356,8 +360,8 @@ def parse_agent_output(raw_output: str):
         }
         
     except json.JSONDecodeError as e:
-        print(f"JSON decode error: {e}")
-        print(f"Attempted to parse: {json_str[:200] if 'json_str' in locals() else 'No JSON string found'}...")
+        logger.error(f"JSON decode error: {e}")
+        logger.error(f"Attempted to parse: {json_str[:200] if 'json_str' in locals() else 'No JSON string found'}...")
         
         # Return a default structure with some extracted info
         return {
@@ -370,10 +374,10 @@ def parse_agent_output(raw_output: str):
 
 def generate_patches_for_issue(issue, analysis):
     """Generate patches for the issue if conditions are met."""
-    print("Evaluating issue for patch generation...")
+    logger.info("Evaluating issue for patch generation...")
     
     if not ENABLE_PATCH_GENERATION:
-        print("Patch generation is disabled (ENABLE_PATCH_GENERATION=false)")
+        logger.info("Patch generation is disabled (ENABLE_PATCH_GENERATION=false)")
         return None
     
     try:
@@ -391,7 +395,7 @@ def generate_patches_for_issue(issue, analysis):
         return result
         
     except Exception as e:
-        print(f"Error in patch generation: {e}")
+        logger.error(f"Error in patch generation: {e}")
         return {
             "patch_data": {"filesToUpdate": [], "summaryOfChanges": f"Error: {str(e)}"},
             "pr_url": f"Patch generation failed: {str(e)}",
@@ -418,7 +422,7 @@ def append_to_google_doc(text_to_append: str):
             with open("token.json", "w") as token:
                 token.write(creds.to_json())
         
-        print("Appending analysis to Google Doc...")
+        logger.info("Appending analysis to Google Doc...")
         service = build("docs", "v1", credentials=creds)
         requests = [
             {
@@ -429,11 +433,11 @@ def append_to_google_doc(text_to_append: str):
             }
         ]
         service.documents().batchUpdate(documentId=GOOGLE_DOCS_ID, body={"requests": requests}).execute()
-        print("Successfully updated Google Doc.")
+        logger.info("Successfully updated Google Doc.")
     except Exception as e:
-        print(f"An error occurred while updating Google Docs: {e}")
-        print("The analysis will be printed to console instead:")
-        print(text_to_append)
+        logger.error(f"An error occurred while updating Google Docs: {e}")
+        logger.info("The analysis will be printed to console instead:")
+        logger.info(text_to_append)
 
 # --- Main Execution ---
 # The main execution block is removed to convert this file into a library module.

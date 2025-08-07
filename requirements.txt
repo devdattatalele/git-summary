@@ -10,11 +10,11 @@ google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 google-api-python-client==2.149.0
 
-# LangChain and related packages
-langchain==0.1.0
-langchain-core==0.3.71
-langchain-chroma==0.2.5
-langchain-google-genai==2.0.8
+# LangChain
+langchain
+langchain-core
+langchain-chroma
+langchain-google-genai
 
 # Vector database
 chromadb==1.0.15

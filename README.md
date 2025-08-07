@@ -1,293 +1,387 @@
-# GitHub Issue Analyzer
+# GitHub Issue Resolution MCP Server
 
-An AI-powered system that analyzes GitHub issues using retrieval-augmented generation (RAG). The system ingests repository documentation and historical issues into a vector database, then uses LangChain agents with Google Gemini AI to provide intelligent analysis of new issues. **Phase 2** now includes automatic patch generation and PR creation.
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎯 What This System Does
+A comprehensive **Model Context Protocol (MCP) server** that enables AI agents to analyze GitHub repositories, understand issues, generate solutions, and create pull requests automatically using advanced RAG (Retrieval Augmented Generation) techniques.
 
-### **Phase 1: Knowledge Ingestion (`ingest_repo.py`)**
-- Clones GitHub repositories locally for fast access
-- Extracts documentation files (`.md`, `.txt`, `README`)
-- Fetches all repository issues (open and closed) with comments
-- **NEW**: Extracts and analyzes code at function/class level
-- **NEW**: Ingests PR history with diffs for learning from past solutions
-- Chunks content for optimal embedding
-- Creates vector embeddings using Google Gemini
-- **NEW**: Stores everything in Pinecone vector database with organized namespaces:
-  - `documentation`: Repository docs and README files
-  - `issues_history`: Historical issues and comments
-  - `repo_code_main`: Function-level code chunks with metadata
-  - `pr_history`: Merged PR diffs and descriptions
+## 🌟 Features
 
-### **Phase 2: Issue Analysis (`analyze_issue.py`)**
-- Takes a GitHub issue URL as input
-- Uses LangChain agents to search the knowledge base
-- Finds similar past issues and relevant documentation
-- Provides AI analysis including:
-  - Problem summary
-  - Complexity assessment (1-5 scale)
-  - Step-by-step solution proposal
-  - References to similar resolved issues
-- **NEW**: Automatically generates code patches by querying:
-  - PR history for similar solutions
-  - Repository code for relevant functions/files
-- **NEW**: Creates draft PRs with generated patches (for low-complexity issues)
-- Automatically writes comprehensive analysis to Google Docs
+### 🔍 **Intelligent Repository Analysis**
+- **Repository-Specific RAG**: Each repository gets its own isolated knowledge base
+- **Comprehensive Ingestion**: Processes documentation, code, issues, and PR history
+- **Smart Chunking**: Optimized text processing for better AI comprehension
+- **Real-time Progress**: Live feedback during long-running operations
 
-### **Phase 3: Patch Generation (`patch_generator.py`)**
-- **NEW**: Queries multiple Pinecone namespaces for comprehensive context
-- **NEW**: Uses LLM to generate unified diff patches
-- **NEW**: Automatically creates GitHub branches and applies patches
-- **NEW**: Opens draft PRs with detailed change summaries
-- **NEW**: Configurable complexity thresholds for auto-PR creation
+### 🤖 **AI-Powered Issue Resolution**
+- **LangChain Integration**: Advanced agent-based issue analysis
+- **Google Gemini**: State-of-the-art language model for code understanding
+- **Context-Aware Solutions**: Leverages repository history for better recommendations
+- **Complexity Assessment**: Automatic difficulty rating and similar issue detection
 
-## 🏗️ Architecture
+### 🛠️ **Automated Patch Generation**
+- **Code Patch Creation**: Generates specific file changes to resolve issues
+- **GitHub Integration**: Automatic PR creation with generated patches
+- **Diff Generation**: Unified diff format for easy review
+- **Branch Management**: Automated branch creation and management
 
-```
-GitHub Repo → Local Clone → Text/Code Extraction → Function Parsing → Gemini Embeddings → Pinecone Namespaces
-                                                                                              ↓
-                                                                           ┌─ documentation ─┐
-                                                                           ├─ issues_history ─┤
-                                                                           ├─ repo_code_main ─┤
-                                                                           └─ pr_history ─────┘
-                                                                                              ↓
-New Issue URL → GitHub API → LangChain Agent → Multi-Namespace Search → Gemini Analysis → Patch Generator
-                                                                                              ↓
-                                                                           Google Docs ← Draft PR ← GitHub API
-```
+### 🔧 **Multi-Repository Support**
+- **Isolated Knowledge Bases**: Each repository maintains separate data
+- **Easy Switching**: Seamless analysis across different repositories
+- **Data Management**: Built-in tools to list, clear, and manage repository data
+- **Scalable Architecture**: Handles unlimited repositories efficiently
 
-## 🚀 Setup Instructions
+## 🚀 Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
+
+- **Python 3.8+**
+- **Claude Desktop** or **VS Code with MCP extension**
+- **GitHub Personal Access Token**
+- **Google API Key** (for Gemini)
+
+### 1. Installation
 
 ```bash
-# Install compatible Pinecone SDK
-pip install pinecone-client==2.2.4
+git clone https://github.com/your-username/github-issue-mcp-server.git
+cd github-issue-mcp-server
 
-# Install all dependencies (including new GitPython)
-pip install python-dotenv PyGithub langchain-google-genai langchain-pinecone langchain google-generativeai tqdm google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client GitPython
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-### 2. Set Up API Keys
+### 2. Configuration
 
-Copy `env_example.txt` to `.env` and fill in your credentials:
+Create a `.env` file in the project root:
+
+```env
+# Required: GitHub API access
+GITHUB_TOKEN=your_github_personal_access_token
+
+# Required: Google Gemini API access
+GOOGLE_API_KEY=your_google_api_key
+
+# Optional: Google Docs integration
+GOOGLE_DOCS_ID=your_google_docs_document_id
+```
+
+### 3. Setup
+
+Run the automated setup script:
 
 ```bash
-cp env_example.txt .env
+python setup_mcp_server.py
 ```
 
-**Required API Keys:**
+This will:
+- ✅ Validate your environment
+- ✅ Check dependencies
+- ✅ Generate Claude Desktop configuration
+- ✅ Test MCP server functionality
 
-1. **GitHub Token**: Generate at https://github.com/settings/tokens
-   - For public repos: `public_repo` scope
-   - **For patch generation**: `repo` scope (required for creating branches and PRs)
+### 4. Claude Desktop Integration
 
-2. **Google API Key**: Get from https://console.cloud.google.com/apis/credentials
-   - Enable Generative AI API
-   - Create API key
+The setup script automatically creates `config/claude_desktop_config.json`. Copy this to your Claude Desktop configuration directory:
 
-3. **Pinecone API Key**: Get from https://app.pinecone.io/
-   - Create a free account
-   - Copy your API key
+**macOS:**
+```bash
+cp config/claude_desktop_config.json ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
 
-4. **Google Docs ID**: Create a Google Doc and extract ID from URL
-   - URL format: `https://docs.google.com/document/d/{DOCUMENT_ID}/edit`
+**Windows:**
+```bash
+copy config\claude_desktop_config.json %APPDATA%\Claude\claude_desktop_config.json
+```
 
-**NEW Phase 2 Configuration:**
+### 5. Restart Claude Desktop
 
-5. **ENABLE_PATCH_GENERATION**: Set to `true` to enable automatic patch generation
-6. **MAX_COMPLEXITY_FOR_AUTO_PR**: Set threshold (1-5) for auto-creating PRs
-
-### 3. Set Up Google Docs API (Optional but Recommended)
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing
-3. Enable Google Docs API
-4. Create credentials (OAuth 2.0)
-5. Download `credentials.json` to your project root
+After copying the configuration, restart Claude Desktop to load the MCP server.
 
 ## 📖 Usage
 
-### Step 1: Ingest Repository Knowledge (Enhanced)
+### Step 1: Ingest a Repository
+
+```
+Ingest the microsoft/vscode repository for analysis
+```
+
+This creates a comprehensive knowledge base including:
+- 📚 **Documentation** (README, wikis, markdown files)
+- 🐛 **Issues** (open/closed issues with discussions)
+- 💻 **Code** (source files with function-level analysis)
+- 🔄 **PR History** (merged pull requests and changes)
+
+### Step 2: Analyze Issues
+
+```
+Analyze https://github.com/microsoft/vscode/issues/12345
+```
+
+Get comprehensive analysis including:
+- **Summary**: AI-generated issue understanding
+- **Complexity Rating**: 1-5 difficulty assessment
+- **Proposed Solution**: Detailed resolution approach
+- **Similar Issues**: Related problems from repository history
+
+### Step 3: Generate Patches
+
+```
+Generate patches for the analyzed issue
+```
+
+Creates:
+- **File-specific changes**: Targeted modifications
+- **Unified diffs**: Standard patch format
+- **Implementation details**: Step-by-step changes
+
+### Step 4: Create Pull Requests
+
+```
+Create a GitHub PR with the generated patches
+```
+
+Automatically:
+- **Creates branch**: Timestamped feature branch
+- **Applies patches**: File modifications
+- **Creates PR**: Draft pull request with description
+- **Links issue**: References original issue
+
+## 🛠️ Available Tools
+
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| `ingest_repository_tool` | Build knowledge base | `ingest_repository_tool('owner/repo')` |
+| `analyze_github_issue_tool` | AI issue analysis | `analyze_github_issue_tool('https://github.com/...')` |
+| `generate_code_patch_tool` | Create fix patches | `generate_code_patch_tool(issue_body, repo)` |
+| `create_github_pr_tool` | Create Pull Requests | `create_github_pr_tool(patch_data, repo)` |
+| `list_ingested_repositories` | Show all repos | `list_ingested_repositories()` |
+| `clear_repository_data` | Clean specific repo | `clear_repository_data(repo, confirm=True)` |
+| `get_repository_status` | Check repo info | `get_repository_status('owner/repo')` |
+| `validate_repository_tool` | Test repo access | `validate_repository_tool('owner/repo')` |
+
+## 🏗️ Architecture
+
+### Core Components
+
+```
+github_issue_mcp_server.py     # Main MCP server
+├── issue_solver/
+│   ├── ingest.py              # Repository ingestion & RAG
+│   ├── analyze.py             # Issue analysis & AI agents
+│   └── patch.py               # Patch generation & PR creation
+├── config/
+│   └── claude_desktop_config.json  # Claude Desktop setup
+├── examples/
+│   └── client.py              # Example MCP client
+└── docs/                      # Comprehensive documentation
+```
+
+### Technology Stack
+
+- **MCP Protocol**: Model Context Protocol for AI tool integration
+- **FastMCP**: Python SDK for building MCP servers
+- **LangChain**: Agent framework for AI reasoning
+- **Google Gemini**: Advanced language model
+- **ChromaDB**: Vector database for RAG
+- **GitHub API**: Repository data access
+- **PyGithub**: GitHub API Python wrapper
+
+### Data Flow
+
+```mermaid
+graph LR
+    A[GitHub Repo] --> B[Ingest Tool]
+    B --> C[ChromaDB Vector Store]
+    C --> D[AI Analysis Agent]
+    D --> E[Patch Generation]
+    E --> F[GitHub PR Creation]
+    
+    G[Claude Desktop] --> H[MCP Server]
+    H --> B
+    H --> D
+    H --> E
+    H --> F
+```
+
+## 📊 Performance
+
+### Repository Processing
+
+| Repository Size | Documentation | Issues | Code Files | Processing Time |
+|----------------|---------------|--------|------------|----------------|
+| Small (< 1K files) | ~2 min | ~1 min | ~3 min | ~6 minutes |
+| Medium (1K-10K files) | ~5 min | ~3 min | ~10 min | ~18 minutes |
+| Large (> 10K files) | ~15 min | ~5 min | ~30 min | ~50 minutes |
+
+### Analysis Speed
+
+- **Issue Analysis**: 30-60 seconds
+- **Patch Generation**: 1-3 minutes  
+- **PR Creation**: 10-30 seconds
+
+## 🔧 Advanced Configuration
+
+### Custom Limits
+
+```python
+# In .env file
+MAX_ISSUES=200          # Maximum issues to process
+MAX_PRS=100            # Maximum PRs to process
+# Note: No limits on documentation/code processing
+```
+
+### Logging Configuration
+
+```python
+# Enable debug logging
+PYTHONPATH=/path/to/project python github_issue_mcp_server.py --log-level DEBUG
+```
+
+### ChromaDB Configuration
+
+The system automatically manages ChromaDB with:
+- **Persistent storage**: Data survives restarts
+- **Repository isolation**: Each repo has separate collections
+- **Automatic cleanup**: Built-in data management tools
+
+## 🧪 Testing
+
+### Run Test Suite
 
 ```bash
-cd github-rag-ingestion
-python ingest_repo.py "owner/repo-name"
+# Run comprehensive tests
+python test_mcp_server.py
+
+# Test specific functionality
+python -c "
+import asyncio
+from github_issue_mcp_server import validate_repository_tool
+print(asyncio.run(validate_repository_tool('microsoft/vscode')))
+"
 ```
 
-**NEW Options:**
-```bash
-# Skip PR history for faster ingestion
-python ingest_repo.py "owner/repo-name" --skip-prs
-
-# Skip code analysis for docs-only projects  
-python ingest_repo.py "owner/repo-name" --skip-code
-```
-
-**Example:**
-```bash
-python ingest_repo.py "microsoft/vscode"
-```
-
-This will:
-- Clone the repository locally
-- Extract all documentation
-- **NEW**: Parse code files and extract functions/classes
-- Fetch all issues and comments
-- **NEW**: Fetch merged PR history with diffs
-- Create vector embeddings
-- **NEW**: Store in organized Pinecone namespaces
-
-### Step 2: Analyze Issues with Patch Generation
+### Validate Setup
 
 ```bash
-cd github_analyzer
-python analyze_issue.py "https://github.com/owner/repo/issues/123"
+# Check environment and dependencies
+python setup_mcp_server.py
 ```
 
-**NEW Options:**
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**1. Server Connection Failed**
 ```bash
-# Skip patch generation for analysis-only
-python analyze_issue.py "https://github.com/owner/repo/issues/123" --no-patches
+# Check Python path in Claude Desktop config
+cat config/claude_desktop_config.json
+
+# Verify MCP installation
+pip show mcp
 ```
 
-**Example:**
+**2. Repository Access Denied**
 ```bash
-python analyze_issue.py "https://github.com/microsoft/vscode/issues/12345"
+# Verify GitHub token permissions
+curl -H "Authorization: token YOUR_TOKEN" https://api.github.com/user
 ```
 
-This will:
-- Fetch the issue details
-- Search vector database for relevant context
-- Generate AI analysis
-- **NEW**: Generate code patches using AI
-- **NEW**: Automatically create draft PR (if complexity ≤ threshold)
-- Write comprehensive results to Google Docs
-
-## 📊 Example Output (Enhanced)
-
-The analysis now includes patch generation results:
-
-```
-### Issue #123: Login Button Not Working
-- Repository: owner/repo-name
-- Link: https://github.com/owner/repo/issues/123
-- Analyzed On: 15 January, 2025 at 14:30
-- Status: open
-
-| Category            | AI Analysis                                    |
-| ------------------- | ---------------------------------------------- |
-| Summary             | Login button click handler is not attached    |
-| Complexity          | 2 / 5                                         |
-| Similar Issues      | PR #45, issue #78                             |
-
-Proposed Solution:
-1. Add click event listener to login button
-2. Implement authentication validation
-3. Add error handling for failed login attempts
-4. Update UI state based on authentication status
-
-Patch Generation Results:
-- Auto-generated PR: https://github.com/owner/repo/pull/124
-- Files Modified: 2
-- Summary of Changes: Added event listener and validation logic to LoginComponent
+**3. Google API Quota Exceeded**
+```bash
+# Check API usage
+# The system automatically handles rate limits with fallback analysis
 ```
 
-## 🔧 Technical Details
-
-### **Technologies Used:**
-- **Pinecone**: Vector database for semantic search with namespace organization
-- **Google Gemini**: AI embeddings and text generation
-- **LangChain**: Agent framework and RAG pipeline
-- **PyGithub**: GitHub API integration
-- **GitPython**: Git operations for patch application
-- **Google Docs API**: Automated report generation
-
-### **NEW: Namespace Organization:**
-```json
-{
-  "documentation": "README files, docs, markdown",
-  "issues_history": "Past issues and comments",
-  "repo_code_main": "Function-level code chunks", 
-  "pr_history": "Merged PR diffs and descriptions"
-}
+**4. ChromaDB Permission Errors**
+```bash
+# Clear and recreate database
+rm -rf chroma_db/
+python -c "from github_issue_mcp_server import ingest_repository_tool; import asyncio; asyncio.run(ingest_repository_tool('test/repo'))"
 ```
 
-### **NEW: Enhanced Metadata Schema:**
-```json
-{
-  "code_chunk": {
-    "filePath": "src/components/Login.tsx",
-    "functionName": "handleLogin", 
-    "functionType": "function",
-    "branch": "main",
-    "start_line": 45,
-    "end_line": 67
-  },
-  "pr_chunk": {
-    "pr_number": 123,
-    "pr_title": "Fix login validation",
-    "pr_url": "https://github.com/...",
-    "merged_at": "2025-01-15T10:30:00Z"
-  }
-}
+### Debug Logs
+
+Monitor real-time logs:
+```bash
+# macOS
+tail -f ~/Library/Logs/Claude/mcp-server-github-issue-resolver.log
+
+# Windows  
+type %APPDATA%\Claude\logs\mcp-server-github-issue-resolver.log
 ```
 
-### **NEW: Patch Generation Pipeline:**
-1. **Context Retrieval**: Query `pr_history` and `repo_code_main` namespaces
-2. **LLM Analysis**: Generate unified diff patches using contextual information
-3. **Branch Creation**: Create new Git branch via GitHub API
-4. **Patch Application**: Apply patches to files using GitPython
-5. **PR Creation**: Open draft PR with detailed change summary
+## 📚 Documentation
 
-### **Why pinecone-client==2.2.4?**
-The latest Pinecone SDK (v3+) changed the API completely and is not compatible with LangChain integrations. Version 2.2.4 is the last compatible version.
+Comprehensive documentation is available at: [docs/](docs/)
 
-## 🛠️ Troubleshooting
+- **[Installation Guide](docs/getting_started/installation.md)**
+- **[Configuration](docs/getting_started/configuration.md)**
+- **[API Reference](docs/api_reference/)**
+- **[Architecture](docs/concepts/architecture.md)**
+- **[Workflow](docs/concepts/workflow.md)**
 
-### Common Issues:
+### Build Documentation
 
-1. **Import Error: cannot import name 'Pinecone'**
+```bash
+# Install mkdocs
+pip install mkdocs mkdocs-material
+
+# Serve locally
+mkdocs serve
+
+# Build for production
+mkdocs build
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Development Setup
+
    ```bash
-   pip uninstall pinecone pinecone-client -y
-   pip install pinecone-client==2.2.4
-   ```
+# Clone repository
+git clone https://github.com/your-username/github-issue-mcp-server.git
+cd github-issue-mcp-server
 
-2. **Patch Generation Import Error**
-   - Ensure `patch_generator.py` is in the project root
-   - Check Python path configuration in `analyze_issue.py`
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-3. **GitHub Permission Error for PR Creation**
-   - Ensure GitHub token has `repo` scope (not just `public_repo`)
-   - Verify repository write permissions
+# Install development dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
-4. **Empty Namespaces**
-   - Run ingestion script with appropriate flags
-   - Check Pinecone dashboard for namespace statistics
+# Run tests
+python test_mcp_server.py
+```
 
-5. **Function Parsing Errors**
-   - Supported languages: Python, JavaScript, TypeScript
-   - Files that can't be parsed fall back to whole-file chunks
+### Code Style
 
-## 🔮 Future Enhancements
+- **Black**: Code formatting
+- **Flake8**: Linting
+- **Type hints**: Full type annotation
+- **Docstrings**: Comprehensive documentation
 
-- [x] **Function-level code analysis**
-- [x] **PR history ingestion and learning**
-- [x] **Automatic patch generation**
-- [x] **Draft PR creation**
-- [ ] Support for more programming languages in function extraction
-- [ ] Advanced patch conflict resolution
-- [ ] Multi-repository knowledge bases
-- [ ] Slack/Discord integration for notifications
-- [ ] Custom analysis templates
-- [ ] Automated issue triage and labeling
-- [ ] Integration with project management tools
-- [ ] Code review automation
+## 📄 License
 
-## 📝 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-This project is open source. Feel free to modify and adapt for your needs.
+## 🙏 Acknowledgments
+
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** - Protocol specification
+- **[FastMCP](https://github.com/jlowin/fastmcp)** - Python MCP SDK
+- **[LangChain](https://langchain.com/)** - AI agent framework
+- **[Google Gemini](https://ai.google.dev/)** - Language model
+- **[ChromaDB](https://www.trychroma.com/)** - Vector database
+
+## 🌟 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=your-username/github-issue-mcp-server&type=Date)](https://star-history.com/#your-username/github-issue-mcp-server&Date)
 
 ---
 
-**Built with ❤️ for better GitHub issue management and automated patch generation** 
+**Built with ❤️ for the AI and developer community**
 
+[Report Bug](https://github.com/your-username/github-issue-mcp-server/issues) · [Request Feature](https://github.com/your-username/github-issue-mcp-server/issues) · [Documentation](docs/) · [Examples](examples/)

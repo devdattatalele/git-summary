@@ -342,8 +342,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
    ```bash
 # Clone repository
-git clone https://github.com/your-username/github-issue-mcp-server.git
-cd github-issue-mcp-server
+git clone https://github.com/devdattatalele/git-summary.git
+cd git-summary
 
 # Create virtual environment
 python -m venv venv
@@ -378,10 +378,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=your-username/github-issue-mcp-server&type=Date)](https://star-history.com/#your-username/github-issue-mcp-server&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=devdattatalele/git-summary&type=Date)](https://star-history.com/#devdattatalele/git-summary&Date)
 
 ---
 
 **Built with ❤️ for the AI and developer community**
 
-[Report Bug](https://github.com/your-username/github-issue-mcp-server/issues) · [Request Feature](https://github.com/your-username/github-issue-mcp-server/issues) · [Documentation](docs/) · [Examples](examples/)
+[Report Bug](https://github.com/devdattatalele/git-summary/issues) · [Request Feature](https://github.com/devdattatalele/git-summary/issues) · [Documentation](docs/) · [Examples](examples/)

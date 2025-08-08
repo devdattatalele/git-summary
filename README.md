@@ -378,8 +378,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=devdattatalele/git-summary&type=Date)](https://star-history.com/#devdattatalele/git-summary&Date)
+## Star History
 
+[![Star History Chart](https://api.star-history.com/svg?repos=devdattatalele/git-summary&type=Date)](https://www.star-history.com/#devdattatalele/git-summary&Date)
 ---
 
 **Built with ❤️ for the AI and developer community**

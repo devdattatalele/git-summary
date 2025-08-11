@@ -295,9 +295,35 @@ def create_pr(patch_data: Dict[str, Any], repo_full_name: str, base_branch: str 
         
         logger.info(f"Creating branch: {head_branch}")
         
-        # Get the base branch reference
-        base_ref = repo.get_branch(base_branch)
-        base_sha = base_ref.commit.sha
+        # Get the base branch reference, with fallback to default branch
+        try:
+            base_ref = repo.get_branch(base_branch)
+            base_sha = base_ref.commit.sha
+            logger.info(f"Using specified base branch: {base_branch}")
+        except Exception as e:
+            logger.warning(f"Branch '{base_branch}' not found: {e}")
+            # Try to get the default branch
+            try:
+                default_branch = repo.default_branch
+                logger.info(f"Falling back to default branch: {default_branch}")
+                base_ref = repo.get_branch(default_branch)
+                base_sha = base_ref.commit.sha
+                base_branch = default_branch  # Update base_branch for later use
+            except Exception as e2:
+                logger.error(f"Could not find default branch either: {e2}")
+                # Try common branch names as last resort
+                for branch_name in ["master", "main", "develop"]:
+                    try:
+                        logger.info(f"Trying branch: {branch_name}")
+                        base_ref = repo.get_branch(branch_name)
+                        base_sha = base_ref.commit.sha
+                        base_branch = branch_name
+                        logger.info(f"Successfully using branch: {branch_name}")
+                        break
+                    except:
+                        continue
+                else:
+                    raise Exception(f"Could not find any suitable base branch. Tried: {base_branch}, {repo.default_branch}, master, main, develop")
         
         # Create new branch
         repo.create_git_ref(ref=f"refs/heads/{head_branch}", sha=base_sha)

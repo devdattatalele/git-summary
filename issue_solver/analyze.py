@@ -38,25 +38,27 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GOOGLE_DOCS_ID = os.getenv("GOOGLE_DOCS_ID")
 
 # Chroma configuration
-#CHROMA_PERSIST_DIR = "chroma_db"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", os.path.abspath(os.path.join(PROJECT_ROOT, "chroma_db")))
 COLLECTION_ISSUES = "issues_history"
 
 # Patch generator configuration
 ENABLE_PATCH_GENERATION = os.getenv("ENABLE_PATCH_GENERATION", "true").lower() == "true"
 MAX_COMPLEXITY_FOR_AUTO_PR = int(os.getenv("MAX_COMPLEXITY_FOR_AUTO_PR", "4"))
 
-# Validate required environment variables
+# Validate required environment variables (only check truly required ones)
 required_vars = {
     'GOOGLE_API_KEY': GOOGLE_API_KEY,
-    'GITHUB_TOKEN': GITHUB_TOKEN,
-    'GOOGLE_DOCS_ID': GOOGLE_DOCS_ID
+    'GITHUB_TOKEN': GITHUB_TOKEN
 }
 
 for var_name, var_value in required_vars.items():
     if not var_value:
         raise ValueError(f"Required environment variable {var_name} is not set in .env file")
+
+# GOOGLE_DOCS_ID is optional - log warning if not present
+if not GOOGLE_DOCS_ID:
+    logger.warning("GOOGLE_DOCS_ID not set - analysis results will not be saved to Google Docs")
 
 # Google Docs API scopes
 SCOPES = ["https://www.googleapis.com/auth/documents"]
@@ -81,8 +83,8 @@ def get_github_issue(owner: str, repo_name: str, issue_number: int):
     except Exception as e:
         raise Exception(f"Failed to fetch GitHub issue: {e}")
 
-def initialize_chroma_retriever():
-    """Initializes the Chroma vector store and retriever tool."""
+def initialize_chroma_retriever(repo_name: str = None):
+    """Initializes the Chroma vector store and retriever tool with repository-specific collection."""
     logger.info("Initializing Chroma vector store and retriever...")
     try:
         # Check if Chroma database exists
@@ -98,12 +100,18 @@ def initialize_chroma_retriever():
             google_api_key=GOOGLE_API_KEY
         )
         
-        # Connect to the Chroma collection for issues
-        logger.info(f"Loading Chroma collection: {COLLECTION_ISSUES}")
+        # Create repository-specific collection name for issues
+        if repo_name:
+            safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
+            collection_name = f"{safe_repo_name}_{COLLECTION_ISSUES}"
+        else:
+            collection_name = COLLECTION_ISSUES
+            
+        logger.info(f"Loading Chroma collection: {collection_name}")
         chroma_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
-            collection_name=COLLECTION_ISSUES
+            collection_name=collection_name
         )
         
         # Create retriever
@@ -132,7 +140,9 @@ def create_langchain_agent(issue):
             max_retries=2,  # Reduce retries to avoid long waits
             request_timeout=30  # Shorter timeout
         )
-        retriever_tool = initialize_chroma_retriever()
+        # Pass repository name to use repository-specific collection
+        repo_name = issue.repository.full_name
+        retriever_tool = initialize_chroma_retriever(repo_name)
         tools = [retriever_tool]
 
         # Enhanced prompt template with better instructions
@@ -274,7 +284,8 @@ def create_fallback_analysis(issue):
     
     # Try to get some context from the knowledge base without LLM
     try:
-        retriever_tool = initialize_chroma_retriever()
+        repo_name = issue.repository.full_name
+        retriever_tool = initialize_chroma_retriever(repo_name)
         search_results = retriever_tool.invoke({"query": f"{title} {body[:100]}"})
         if search_results and len(search_results) > 50:
             similar_issues = ["Context found in knowledge base - similar issues may exist"]

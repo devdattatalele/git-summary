@@ -27,8 +27,8 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # Chroma configuration
 # Determine project root and Chroma DB directory
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-CHROMA_PERSIST_DIR = os.path.join(PROJECT_ROOT, "chroma_db")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", os.path.abspath(os.path.join(PROJECT_ROOT, "chroma_db")))
 
 # Validate required environment variables
 required_vars = {
@@ -42,9 +42,9 @@ for var_name, var_value in required_vars.items():
 
 # --- Helper Functions ---
 
-def initialize_chroma_clients():
-    """Initialize Chroma client and vector stores for both collections."""
-    logger.info("Initializing Chroma clients for patch generation...")
+def initialize_chroma_clients(repo_name: str):
+    """Initialize Chroma client and vector stores for both collections with repository-specific names."""
+    logger.info(f"Initializing Chroma clients for patch generation (repo: {repo_name})...")
     try:
         # Check if Chroma database exists
         if not os.path.exists(CHROMA_PERSIST_DIR):
@@ -59,17 +59,24 @@ def initialize_chroma_clients():
             google_api_key=GOOGLE_API_KEY
         )
         
+        # Create repository-specific collection names
+        safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
+        pr_collection_name = f"{safe_repo_name}_pr_history"
+        code_collection_name = f"{safe_repo_name}_repo_code_main"
+        
+        logger.info(f"Using collections: {pr_collection_name}, {code_collection_name}")
+        
         # Create vector stores for both collections
         pr_history_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
-            collection_name="pr_history"
+            collection_name=pr_collection_name
         )
         
         repo_code_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
-            collection_name="repo_code_main"
+            collection_name=code_collection_name
         )
         
         return pr_history_store, repo_code_store
@@ -133,16 +140,19 @@ def generate_patch_for_issue(issue_body: str, repo_full_name: str = None) -> Dic
     
     Args:
         issue_body: The body text of the GitHub issue
-        repo_full_name: Optional repository name for context
+        repo_full_name: Repository name for context (required for repository-specific collections)
         
     Returns:
         Dictionary with filesToUpdate and summaryOfChanges
     """
     logger.info("Starting patch generation process...")
     
+    if not repo_full_name:
+        raise ValueError("repo_full_name is required for patch generation")
+    
     try:
-        # Initialize vector stores
-        pr_history_store, repo_code_store = initialize_chroma_clients()
+        # Initialize vector stores with repository-specific collections
+        pr_history_store, repo_code_store = initialize_chroma_clients(repo_full_name)
         
         # Query both collections
         pr_context, code_context = query_vector_stores(issue_body, pr_history_store, repo_code_store)

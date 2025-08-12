@@ -502,10 +502,15 @@ def fetch_repo_issues(repo, max_issues=100):
 # --- PROCESSING & UPSERTING ---
 async def chunk_and_embed_and_store(documents, embeddings, collection_name: str, repo_name: str = None):
     """Chunks documents, creates embeddings, and stores in Chroma collection with async processing."""
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    # Different chunking strategies based on content type
+    standard_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    
+    # More conservative chunking for issues and PRs to prevent explosion
+    issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=200)
     
     batch_size = 50  # Smaller batches for better responsiveness
     total_documents_stored = 0
+    total_chunks_created = 0
     
     logger.info(f"Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
     
@@ -517,27 +522,46 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
         
         all_chunks = []
         all_metadatas = []
+        batch_chunks_created = 0
         
         # 1. Chunking and metadata preparation
         for doc_idx, doc in enumerate(batch_docs):
-            # For code documents, we might want to preserve the full function/class
-            if doc.get("type") == "code" and len(doc["content"]) <= 2000:
+            doc_type = doc.get("type", "")
+            content = doc["content"]
+            content_length = len(content)
+            
+            # Smart chunking strategy based on document type and size
+            if doc_type == "code" and content_length <= 2000:
                 # Don't chunk small code blocks
-                chunks = [doc["content"]]
+                chunks = [content]
+            elif doc_type in ["issue", "pr"] and content_length <= 4000:
+                # Don't chunk small issues/PRs - keep them as single documents
+                chunks = [content]
+            elif doc_type in ["issue", "pr"]:
+                # Use larger chunks for issues and PRs, limit to max 3 chunks per document
+                chunks = issue_pr_splitter.split_text(content)
+                # Limit chunks per issue/PR to prevent explosion
+                if len(chunks) > 3:
+                    logger.warning(f"Large {doc_type} with {len(chunks)} chunks, truncating to 3 chunks")
+                    chunks = chunks[:3]
             else:
-                chunks = text_splitter.split_text(doc["content"])
+                # Standard chunking for documentation and other content
+                chunks = standard_splitter.split_text(content)
+            
+            batch_chunks_created += len(chunks)
             
             for j, chunk in enumerate(chunks):
                 # Create enhanced metadata based on document type
                 metadata = {
                     "source": doc["source"],
-                    "type": doc["type"],
+                    "type": doc_type,
                     "collection_name": collection_name,
-                    "chunk_index": j
+                    "chunk_index": j,
+                    "original_doc_length": content_length
                 }
                 
                 # Add type-specific metadata
-                if doc.get("type") == "code":
+                if doc_type == "code":
                     metadata.update({
                         "filePath": doc.get("filePath", ""),
                         "functionName": doc.get("functionName", ""),
@@ -546,12 +570,20 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
                         "start_line": doc.get("start_line"),
                         "end_line": doc.get("end_line")
                     })
-                elif doc.get("type") == "pr":
+                elif doc_type == "pr":
                     metadata.update({
                         "pr_number": doc.get("pr_number"),
                         "pr_title": doc.get("pr_title", ""),
                         "pr_url": doc.get("pr_url", ""),
                         "merged_at": doc.get("merged_at")
+                    })
+                elif doc_type == "issue":
+                    metadata.update({
+                        "issue_number": doc.get("issue_number"),
+                        "issue_title": doc.get("issue_title", ""),
+                        "issue_url": doc.get("issue_url", ""),
+                        "created_at": doc.get("created_at"),
+                        "issue_state": doc.get("state", "")
                     })
                 
                 all_chunks.append(chunk)
@@ -560,6 +592,9 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
             # Yield control every 5 documents to prevent timeouts
             if doc_idx % 5 == 0:
                 await asyncio.sleep(0)
+        
+        total_chunks_created += batch_chunks_created
+        logger.info(f"Batch {i//batch_size + 1}: {len(batch_docs)} documents → {batch_chunks_created} chunks (total chunks so far: {total_chunks_created})")
         
         if not all_chunks:
             continue
@@ -592,7 +627,13 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
             
     # Note: Chroma automatically persists to disk when using persist_directory
     
-    logger.info(f"Finished {collection_name}. Total documents stored: {total_documents_stored}")
+    logger.info(f"Finished {collection_name}. Total documents processed: {len(documents)} → Total chunks created and stored: {total_documents_stored}")
+    
+    # Log summary for issues and PRs to show chunking results
+    if collection_name in ["issues_history", "pr_history"]:
+        avg_chunks_per_doc = total_documents_stored / len(documents) if len(documents) > 0 else 0
+        logger.info(f"Chunking summary: {len(documents)} {collection_name.split('_')[0]}s → {total_documents_stored} chunks (avg: {avg_chunks_per_doc:.1f} chunks per {collection_name.split('_')[0]})")
+    
     return total_documents_stored
 
 

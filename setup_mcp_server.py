@@ -90,6 +90,12 @@ def check_environment_variables():
     for var in required_vars:
         if os.getenv(var):
             print(f"  ✅ {var} (set)")
+            # Add special message for GITHUB_TOKEN about required scopes
+            if var == "GITHUB_TOKEN":
+                print("      🔑 For fork workflow support, ensure your GITHUB_TOKEN has these scopes:")
+                print("      📝 • 'repo' - Full repository access (required for fork creation)")
+                print("      🔄 • 'workflow' - GitHub Actions workflow access (recommended)")
+                print("      💡 These scopes enable automatic fork creation for external repositories")
         else:
             print(f"  ❌ {var} (missing)")
             missing_required.append(var)
@@ -322,17 +328,27 @@ def print_usage_instructions():
     print("   • Your server should appear as 'github-issue-resolver'")
     
     print("\n3. 🎯 First steps in Claude:")
-    print("   • Ingest a repository: 'Ingest the microsoft/vscode repository'")
-    print("   • Analyze an issue: 'Analyze https://github.com/microsoft/vscode/issues/12345'")
-    print("   • Generate patches: 'Generate a patch for the login issue in microsoft/vscode'")
+    print("   • Complete workflow: 'Resolve this issue: https://github.com/coderabbitai/coderabbit-docs/issues/487'")
+    print("   • Or step-by-step: 'Start ingesting microsoft/vscode repository'")
+    print("   • Follow 4-step process: docs → code → issues → PRs")
+    print("   • Analyze only: 'Analyze https://github.com/microsoft/vscode/issues/12345'")
+    print("   • Create PR with fork: 'Create a PR for the navbar fix in coderabbitai/coderabbit-docs'")
     
     print("\n4. 🛠️  Available tools:")
-    print("   • ingest_repository_tool - Build knowledge base")
-    print("   • analyze_github_issue_tool - Analyze issues")
-    print("   • generate_code_patch_tool - Generate patches")
-    print("   • create_github_pr_tool - Create pull requests")
-    print("   • get_repository_status - Check status")
-    print("   • validate_repository_tool - Validate access")
+    print("   🚀 Multi-Step Ingestion:")
+    print("     • start_repository_ingestion - Initialize repo and start ingestion")
+    print("     • ingest_repository_docs/code/issues/prs - Step-by-step ingestion")
+    print("   📊 Analysis & Patching:")
+    print("     • comprehensive_issue_resolver - Complete 9-step workflow (RECOMMENDED)")
+    print("     • analyze_github_issue_tool - Analyze issues using RAG")
+    print("     • generate_code_patch_tool - Generate patches for issues")
+    print("   🔧 PR Creation (Fork-Aware):")
+    print("     • create_pr_with_fork_workflow - Smart PR creation (recommended)")
+    print("     • create_github_pr_from_patch - Simple PR creation")
+    print("     • create_github_pr_tool - Advanced PR creation")
+    print("   📋 Repository Management:")
+    print("     • get_repository_status - Check detailed ingestion progress")
+    print("     • validate_repository_tool - Validate repository access")
     
     print("\n💡 TIPS:")
     print("   • Always ingest a repository before analyzing its issues")

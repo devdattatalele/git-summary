@@ -42,6 +42,23 @@ for var_name, var_value in required_vars.items():
 
 # --- Helper Functions ---
 
+def _extract_json_from_response(text: str) -> str:
+    """
+    Aggressively finds and extracts a JSON object from a string.
+    Handles markdown code fences, leading/trailing text, and partial objects.
+    """
+    # Pattern to find JSON enclosed in ```json ... ```
+    match = re.search(r'```json\s*\n(.*?)\n\s*```', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Fallback pattern for a simple JSON object `{...}`
+    match = re.search(r'(\{.*\})', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+        
+    return text # Return original text if no JSON is found
+
 def initialize_chroma_clients(repo_name: str):
     """Initialize Chroma client and vector stores for both collections with repository-specific names."""
     logger.info(f"Initializing Chroma clients for patch generation (repo: {repo_name})...")
@@ -222,37 +239,27 @@ Generate the patches now:"""
         
         # Parse JSON response
         try:
-            # Try to extract JSON from the response
             response_text = response.content if hasattr(response, 'content') else str(response)
             
-            # Look for JSON block
-            json_match = re.search(r'```json\s*\n(.*?)\n\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find JSON directly
-                json_match = re.search(r'(\{.*\})', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    json_str = response_text
+            # Use the new helper to clean the response before parsing
+            json_str = _extract_json_from_response(response_text)
             
             patch_data = json.loads(json_str)
             
             # Validate the structure
             if "filesToUpdate" not in patch_data or "summaryOfChanges" not in patch_data:
-                raise ValueError("Invalid patch data structure")
+                raise ValueError("Invalid patch data structure: Missing required keys 'filesToUpdate' or 'summaryOfChanges'.")
             
-            logger.info(f"Generated patches for {len(patch_data['filesToUpdate'])} files")
+            logger.info(f"Successfully generated and parsed patch for {len(patch_data['filesToUpdate'])} files.")
             return patch_data
             
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Raw response: {response_text}")
-            # Return a default structure
+            error_message = f"Error: Failed to parse a valid JSON patch from the AI's response. Please try again. Error details: {e}"
+            logger.error(error_message)
+            logger.error(f"Raw response was: {response_text}")
             return {
                 "filesToUpdate": [],
-                "summaryOfChanges": "Failed to generate patches - please review manually"
+                "summaryOfChanges": error_message
             }
     
     except Exception as e:

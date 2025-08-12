@@ -22,3 +22,11 @@ Creates a GitHub PR with the generated patches.
     -   `head_branch` (str): The name for the new branch.
     -   `issue_number` (int): The issue number to link.
 -   **Returns:** The URL of the created PR if successful. 
+
+## 📝 Recent Changes
+
+- [x] Added JSON extraction helper `_extract_json_from_response()` in `issue_solver/patch.py`
+- [x] Updated `generate_patch_for_issue()` to use JSON cleaner and validate required keys
+- [x] Added strict JSON validation in `create_github_pr_tool()` to prevent empty PRs
+- [x] Improved error messages and troubleshooting guidance for patch generation failures
+- [x] Updated README and API docs to include changelog and usage enhancements 

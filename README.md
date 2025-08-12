@@ -6,6 +6,14 @@
 
 A comprehensive **Model Context Protocol (MCP) server** that enables AI agents to analyze GitHub repositories, understand issues, generate solutions, and create pull requests automatically using advanced RAG (Retrieval Augmented Generation) techniques.
 
+## 📝 Changelog
+
+- [x] Added JSON extraction helper `_extract_json_from_response()` in `issue_solver/patch.py`
+- [x] Enhanced `generate_patch_for_issue()` to clean LLM output and validate JSON structure
+- [x] Added strict JSON validation in `create_github_pr_tool()` to prevent empty PRs
+- [x] Improved error messages and troubleshooting guidance for patch generation and PR creation
+- [x] Updated README and API reference documentation with changelog section
+
 ## 🌟 Features
 
 ### 🔍 **Intelligent Repository Analysis**

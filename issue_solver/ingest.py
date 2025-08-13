@@ -48,79 +48,129 @@ COLLECTION_PR_HISTORY = "pr_history"
 COLLECTION_REPO_CODE = "repo_code_main"
 
 def extract_functions_from_code(file_content: str, file_path: str) -> List[Dict[str, Any]]:
-    """Extract individual functions from code files."""
+    """Optimized function extraction with smarter chunking for better performance."""
     functions = []
     file_ext = os.path.splitext(file_path)[1].lower()
+    file_size = len(file_content)
+    
+    # PERFORMANCE OPTIMIZATION: For large files, prefer file-level chunks over micro-functions
+    # This reduces the total chunk count significantly while preserving code context
     
     try:
-        if file_ext in ['.py']:
-            # Parse Python files using AST
+        # STRATEGY 1: Small files - keep whole for perfect context
+        if file_size <= 3000:
+            functions.append({
+                "name": os.path.basename(file_path),
+                "type": "file",
+                "code": file_content,
+                "start_line": 1,
+                "end_line": file_content.count('\n') + 1
+            })
+            return functions
+        
+        # STRATEGY 2: Medium files - extract major functions/classes only
+        if file_ext in ['.py'] and file_size <= 10000:
             tree = ast.parse(file_content)
+            major_items = []
+            
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     start_line = node.lineno
-                    # Get the function/class code
                     lines = file_content.split('\n')
                     
-                    # Find the end of the function/class by looking at indentation
-                    end_line = len(lines)
+                    # Smart end detection with size limits
+                    end_line = min(len(lines), start_line + 50)  # Limit function size
                     base_indent = len(lines[start_line - 1]) - len(lines[start_line - 1].lstrip())
                     
-                    for i in range(start_line, len(lines)):
+                    for i in range(start_line, min(len(lines), start_line + 50)):
                         line = lines[i]
                         if line.strip() and len(line) - len(line.lstrip()) <= base_indent and i > start_line:
                             end_line = i
                             break
                     
                     func_code = '\n'.join(lines[start_line-1:end_line])
-                    functions.append({
-                        "name": node.name,
-                        "type": "class" if isinstance(node, ast.ClassDef) else "function",
-                        "code": func_code,
-                        "start_line": start_line,
-                        "end_line": end_line
-                    })
-        
-        elif file_ext in ['.js', '.jsx', '.ts', '.tsx']:
-            # Simple regex-based function extraction for JavaScript/TypeScript
-            # This is a basic implementation - could be improved with proper parsing
-            function_patterns = [
-                r'(function\s+\w+\s*\([^)]*\)\s*\{)',  # function declarations
-                r'(const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*\{)',  # arrow functions
-                r'(\w+\s*:\s*function\s*\([^)]*\)\s*\{)',  # object methods
-                r'(\w+\s*\([^)]*\)\s*\{)',  # method definitions
-            ]
+                    
+                    # Only include substantial functions to reduce noise
+                    if len(func_code) > 100:  # Skip tiny functions
+                        major_items.append({
+                            "name": node.name,
+                            "type": "class" if isinstance(node, ast.ClassDef) else "function",
+                            "code": func_code,
+                            "start_line": start_line,
+                            "end_line": end_line
+                        })
             
-            for pattern in function_patterns:
-                matches = re.finditer(pattern, file_content, re.MULTILINE)
-                for match in matches:
-                    start_pos = match.start()
-                    # Find the matching closing brace
-                    brace_count = 0
-                    end_pos = start_pos
-                    for i, char in enumerate(file_content[start_pos:]):
-                        if char == '{':
-                            brace_count += 1
-                        elif char == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                end_pos = start_pos + i + 1
-                                break
-                    
-                    func_code = file_content[start_pos:end_pos]
-                    func_name = re.search(r'(?:function\s+|const\s+|)(\w+)', func_code)
-                    func_name = func_name.group(1) if func_name else "anonymous"
+            # If we found substantial functions, use them; otherwise use whole file
+            if major_items and len(major_items) <= 5:  # Don't create too many chunks
+                functions.extend(major_items)
+            else:
+                # Too many small functions or no functions - use file-level chunk
+                functions.append({
+                    "name": os.path.basename(file_path),
+                    "type": "file",
+                    "code": file_content,
+                    "start_line": 1,
+                    "end_line": file_content.count('\n') + 1
+                })
+        
+        # STRATEGY 3: Large files - create logical sections
+        elif file_size > 10000:
+            # For very large files, create 2-3 logical sections instead of many small functions
+            lines = file_content.split('\n')
+            total_lines = len(lines)
+            section_size = total_lines // 3  # Create 3 sections max
+            
+            sections = []
+            for i in range(0, total_lines, section_size):
+                end_idx = min(i + section_size, total_lines)
+                section_code = '\n'.join(lines[i:end_idx])
+                
+                sections.append({
+                    "name": f"{os.path.basename(file_path)}_section_{len(sections)+1}",
+                    "type": "section",
+                    "code": section_code,
+                    "start_line": i + 1,
+                    "end_line": end_idx
+                })
+                
+                if len(sections) >= 3:  # Max 3 sections per file
+                    break
+            
+            functions.extend(sections)
+        
+        # STRATEGY 4: JavaScript/TypeScript - simplified approach
+        elif file_ext in ['.js', '.jsx', '.ts', '.tsx']:
+            # For JS files, use file-level or simple splitting for large files
+            if file_size <= 8000:
+                functions.append({
+                    "name": os.path.basename(file_path),
+                    "type": "file",
+                    "code": file_content,
+                    "start_line": 1,
+                    "end_line": file_content.count('\n') + 1
+                })
+            else:
+                # Split large JS files into logical sections
+                lines = file_content.split('\n')
+                section_size = len(lines) // 2  # Max 2 sections for JS
+                
+                for i in range(0, len(lines), section_size):
+                    end_idx = min(i + section_size, len(lines))
+                    section_code = '\n'.join(lines[i:end_idx])
                     
                     functions.append({
-                        "name": func_name,
-                        "type": "function",
-                        "code": func_code,
-                        "start_line": file_content[:start_pos].count('\n') + 1,
-                        "end_line": file_content[:end_pos].count('\n') + 1
+                        "name": f"{os.path.basename(file_path)}_part_{len(functions)+1}",
+                        "type": "section",
+                        "code": section_code,
+                        "start_line": i + 1,
+                        "end_line": end_idx
                     })
+                    
+                    if len(functions) >= 2:  # Max 2 sections
+                        break
         
-        # If no functions found or for other file types, return the whole file
-        if not functions:
+        # FALLBACK: Default to whole file for unknown types
+        else:
             functions.append({
                 "name": os.path.basename(file_path),
                 "type": "file",
@@ -144,17 +194,19 @@ def extract_functions_from_code(file_content: str, file_path: str) -> List[Dict[
 
 async def fetch_repo_code(repo_full_name: str):
     """
-    Clones the repository and extracts code files with function-level chunking.
-    Uses async processing to prevent timeouts.
+    Optimized repository code extraction with performance improvements and chunk reduction.
+    Prioritizes important files and reduces total chunk count significantly.
     """
-    logger.info("Cloning repository for code analysis...")
+    import time
+    start_time = time.time()
+    logger.info("🚀 OPTIMIZED code extraction starting...")
     
     # Use system temp directory to avoid permission issues
     import tempfile
     temp_base_dir = tempfile.mkdtemp(prefix=f"mcp_clone_{repo_full_name.replace('/', '_')}_")
     temp_dir = os.path.join(temp_base_dir, "repo")
     
-    logger.info(f"Using temporary directory: {temp_base_dir}")
+    logger.info(f"📁 Using temporary directory: {temp_base_dir}")
     
     # Remove the directory if it exists from a previous failed run
     if os.path.exists(temp_dir):
@@ -172,7 +224,7 @@ async def fetch_repo_code(repo_full_name: str):
             capture_output=True,
             text=True
         )
-        logger.info("Repository cloned successfully.")
+        logger.info("✅ Repository cloned successfully.")
     except subprocess.CalledProcessError as e:
         logger.warning(f"Failed to clone repository: {e.stderr}")
         # Attempt to clone without token for public repos if the above failed
@@ -190,39 +242,71 @@ async def fetch_repo_code(repo_full_name: str):
                 shutil.rmtree(temp_base_dir)
             return []
 
-    logger.info("Extracting code files from local clone...")
+    logger.info("🔍 Analyzing code files with smart prioritization...")
     code_chunks = []
     
-    # Define code file extensions
-    code_extensions = ['.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c', '.h', '.cs', '.php', '.rb', '.go', '.rs', '.swift']
+    # OPTIMIZED: Priority-based file selection to reduce noise
+    priority_extensions = ['.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.go', '.rs']
+    secondary_extensions = ['.cpp', '.c', '.h', '.cs', '.php', '.rb', '.swift']
     
-    # Collect all code files first
-    code_files = []
+    # Collect files with priority system
+    priority_files = []
+    secondary_files = []
+    
     for root, _, files in os.walk(temp_dir):
+        # Skip common non-essential directories to reduce processing
+        if any(skip_dir in root for skip_dir in [
+            'node_modules', '.git', 'dist', 'build', 'coverage', 
+            '__pycache__', '.pytest_cache', 'venv', 'env'
+        ]):
+            continue
+            
         for file in files:
-            if any(file.endswith(ext) for ext in code_extensions):
-                file_path = os.path.join(root, file)
-                code_files.append(file_path)
+            file_path = os.path.join(root, file)
+            file_size = os.path.getsize(file_path)
+            
+            # Skip very large files to prevent memory issues
+            if file_size > 500000:  # 500KB limit
+                logger.warning(f"Skipping large file: {file} ({file_size} bytes)")
+                continue
+                
+            if any(file.endswith(ext) for ext in priority_extensions):
+                priority_files.append(file_path)
+            elif any(file.endswith(ext) for ext in secondary_extensions):
+                secondary_files.append(file_path)
     
-    logger.info(f"Found {len(code_files)} code files to process...")
+    # Limit total files to process (prevent excessive processing)
+    max_priority_files = 250  # Process up to 150 priority files
+    max_secondary_files = 150   # Process up to 50 secondary files
     
-    # Process files in batches with progress reporting
-    batch_size = 10  # Process 10 files at a time
+    files_to_process = priority_files[:max_priority_files] + secondary_files[:max_secondary_files]
+    
+    logger.info(f"📊 File analysis: {len(priority_files)} priority, {len(secondary_files)} secondary")
+    logger.info(f"🎯 Processing {len(files_to_process)} files (limited for performance)")
+    
+    # Process files efficiently with larger batches
+    batch_size = 25  # Larger batches for efficiency
     processed_count = 0
     
     try:
-        for i in range(0, len(code_files), batch_size):
-            batch = code_files[i:i+batch_size]
+        for i in range(0, len(files_to_process), batch_size):
+            batch_start = time.time()
+            batch = files_to_process[i:i+batch_size]
             
             for file_path in batch:
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()
+                    
+                    # Skip empty or very small files
+                    if len(content.strip()) < 50:
+                        processed_count += 1
+                        continue
                     
                     # Get the relative path to use as the source identifier
                     relative_path = os.path.relpath(file_path, temp_dir)
                     
-                    # Extract functions from the file
+                    # Extract functions/sections with optimized logic
                     functions = extract_functions_from_code(content, relative_path)
                     
                     for func in functions:
@@ -244,9 +328,15 @@ async def fetch_repo_code(repo_full_name: str):
                     logger.warning(f"Could not read file {file_path}: {e}")
                     processed_count += 1
             
-            # Log progress and yield control back to event loop
-            logger.info(f"Processed {processed_count}/{len(code_files)} code files...")
-            await asyncio.sleep(0)  # Yield control to prevent timeout
+            # Enhanced progress logging
+            batch_time = time.time() - batch_start
+            logger.info(f"📦 Processed batch {i//batch_size + 1}: {len(batch)} files → {processed_count} total (⏱️ {batch_time:.1f}s)")
+            
+            # Smart yielding based on time
+            if batch_time > 2.0:
+                await asyncio.sleep(0.02)  # Longer yield for slow batches
+            else:
+                await asyncio.sleep(0.01)  # Quick yield for fast batches
             
     except Exception as e:
         logger.error(f"Error during code processing: {e}")
@@ -255,22 +345,31 @@ async def fetch_repo_code(repo_full_name: str):
         if os.path.exists(temp_base_dir):
             shutil.rmtree(temp_base_dir)
     
-    logger.info(f"Found and processed {len(code_chunks)} code chunks from {processed_count} files.")
+    total_time = time.time() - start_time
+    efficiency_ratio = processed_count / len(code_chunks) if code_chunks else 0
+    
+    logger.info(f"🎉 CODE EXTRACTION COMPLETE:")
+    logger.info(f"  📁 {processed_count} files processed → 📦 {len(code_chunks)} code chunks")
+    logger.info(f"  📊 Efficiency: {efficiency_ratio:.2f} files/chunk (higher = better)")
+    logger.info(f"  ⏱️  Total time: {total_time:.1f} seconds")
+    
     return code_chunks
 
 async def fetch_repo_docs(repo_full_name: str):
     """
-    Clones the repository to a temporary local directory and extracts all
-    Markdown and text files. Uses async processing to prevent timeouts.
+    Optimized documentation extraction with intelligent prioritization and chunk reduction.
+    Focuses on the most important documentation while maintaining quality.
     """
-    logger.info("Cloning repository for faster file access...")
+    import time
+    start_time = time.time()
+    logger.info("🚀 OPTIMIZED documentation extraction starting...")
     
     # Use system temp directory to avoid permission issues
     import tempfile
     temp_base_dir = tempfile.mkdtemp(prefix=f"mcp_docs_{repo_full_name.replace('/', '_')}_")
     temp_dir = os.path.join(temp_base_dir, "repo")
     
-    logger.info(f"Using temporary directory: {temp_base_dir}")
+    logger.info(f"📁 Using temporary directory: {temp_base_dir}")
     
     # Remove the directory if it exists from a previous failed run
     if os.path.exists(temp_dir):
@@ -288,7 +387,7 @@ async def fetch_repo_docs(repo_full_name: str):
             capture_output=True,
             text=True
         )
-        logger.info("Repository cloned successfully.")
+        logger.info("✅ Repository cloned successfully.")
     except subprocess.CalledProcessError as e:
         logger.warning(f"Failed to clone repository: {e.stderr}")
         # Attempt to clone without token for public repos if the above failed
@@ -306,44 +405,112 @@ async def fetch_repo_docs(repo_full_name: str):
                 shutil.rmtree(temp_base_dir)
             return []
 
-    logger.info("Extracting documentation files (.md, .txt) from local clone...")
+    logger.info("📝 Analyzing documentation with smart prioritization...")
     docs = []
     
-    # Collect all documentation files first
-    doc_files = []
+    # PRIORITY SYSTEM: Focus on most important documentation first
+    priority_docs = []    # README, main docs
+    important_docs = []   # API docs, guides, tutorials
+    regular_docs = []     # Other markdown files
+    
+    # Collect documentation files with intelligent prioritization
     for root, _, files in os.walk(temp_dir):
+        # Skip generated/build directories for docs
+        if any(skip_dir in root.lower() for skip_dir in [
+            'node_modules', '.git', 'dist', 'build', '_build', 
+            '.next', '.nuxt', 'coverage', '__pycache__'
+        ]):
+            continue
+            
         for file in files:
             if file.endswith((".md", ".txt", "README")):
                 file_path = os.path.join(root, file)
-                doc_files.append(file_path)
+                file_size = os.path.getsize(file_path)
+                file_lower = file.lower()
+                
+                # Skip extremely large documentation files
+                if file_size > 1000000:  # 1MB limit for docs
+                    logger.warning(f"Skipping large doc file: {file} ({file_size} bytes)")
+                    continue
+                
+                # PRIORITY CLASSIFICATION
+                if any(priority_name in file_lower for priority_name in [
+                    'readme', 'index', 'introduction', 'getting-started', 'quickstart'
+                ]):
+                    priority_docs.append(file_path)
+                elif any(important_name in file_lower for important_name in [
+                    'api', 'guide', 'tutorial', 'doc', 'manual', 'reference',
+                    'install', 'setup', 'config', 'usage'
+                ]):
+                    important_docs.append(file_path)
+                else:
+                    regular_docs.append(file_path)
     
-    logger.info(f"Found {len(doc_files)} documentation files to process...")
+    # Smart limits to prevent doc explosion while preserving quality
+    max_priority_docs = 40   # Process all important docs (READMEs, etc.)
+    max_important_docs = 100  # Process many important docs  
+    max_regular_docs = 200   # Limit regular docs to prevent overload
     
-    # Process files in batches with progress reporting
-    batch_size = 20  # Process 20 files at a time for docs
+    # Build final processing list with priorities
+    docs_to_process = (
+        priority_docs[:max_priority_docs] + 
+        important_docs[:max_important_docs] + 
+        regular_docs[:max_regular_docs]
+    )
+    
+    logger.info(f"📊 Documentation analysis:")
+    logger.info(f"  🎯 Priority docs: {len(priority_docs)} (processing {min(len(priority_docs), max_priority_docs)})")
+    logger.info(f"  📖 Important docs: {len(important_docs)} (processing {min(len(important_docs), max_important_docs)})")  
+    logger.info(f"  📄 Regular docs: {len(regular_docs)} (processing {min(len(regular_docs), max_regular_docs)})")
+    logger.info(f"  🎯 Total processing: {len(docs_to_process)} files")
+    
+    # Process files efficiently with larger batches
+    batch_size = 30  # Larger batches for docs
     processed_count = 0
     
     try:
-        for i in range(0, len(doc_files), batch_size):
-            batch = doc_files[i:i+batch_size]
+        for i in range(0, len(docs_to_process), batch_size):
+            batch_start = time.time()
+            batch = docs_to_process[i:i+batch_size]
             
             for file_path in batch:
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()
+                    
+                    # Skip empty or very small files
+                    if len(content.strip()) < 30:
+                        processed_count += 1
+                        continue
                     
                     # Get the relative path to use as the source identifier
                     relative_path = os.path.relpath(file_path, temp_dir)
-                    docs.append({"source": relative_path, "content": content, "type": "doc"})
+                    
+                    # Determine doc priority for metadata
+                    doc_priority = "priority" if file_path in priority_docs else ("important" if file_path in important_docs else "regular")
+                    
+                    docs.append({
+                        "source": relative_path, 
+                        "content": content, 
+                        "type": "doc",
+                        "doc_priority": doc_priority,
+                        "doc_size": len(content)
+                    })
                     processed_count += 1
                     
                 except Exception as e:
                     logger.warning(f"Could not read file {file_path}: {e}")
                     processed_count += 1
             
-            # Log progress and yield control back to event loop
-            logger.info(f"Processed {processed_count}/{len(doc_files)} documentation files...")
-            await asyncio.sleep(0)  # Yield control to prevent timeout
+            # Enhanced progress logging
+            batch_time = time.time() - batch_start
+            logger.info(f"📦 Processed batch {i//batch_size + 1}: {len(batch)} docs → {processed_count} total (⏱️ {batch_time:.1f}s)")
+            
+            # Smart yielding based on time
+            if batch_time > 2.0:
+                await asyncio.sleep(0.02)  # Longer yield for slow batches
+            else:
+                await asyncio.sleep(0.01)  # Quick yield for fast batches
             
     except Exception as e:
         logger.error(f"Error during documentation processing: {e}")
@@ -352,35 +519,71 @@ async def fetch_repo_docs(repo_full_name: str):
         if os.path.exists(temp_base_dir):
             shutil.rmtree(temp_base_dir)
     
-    logger.info(f"Found and processed {len(docs)} documentation files from {processed_count} files.")
+    total_time = time.time() - start_time
+    
+    logger.info(f"🎉 DOCUMENTATION EXTRACTION COMPLETE:")
+    logger.info(f"  📄 {processed_count} files processed → 📦 {len(docs)} documentation chunks")
+    logger.info(f"  📊 Quality preserved with intelligent prioritization")
+    logger.info(f"  ⏱️  Total time: {total_time:.1f} seconds")
+    
     return docs
 
 def fetch_repo_pr_history(repo, max_prs=50):
-    """Fetches merged pull request history with diffs."""
-    logger.info(f"Fetching pull request history (max: {max_prs})...")
+    """Optimized PR history fetching with smart content filtering and diff size limits."""
+    logger.info(f"🚀 OPTIMIZED PR history fetching (max: {max_prs})...")
     pr_data = []
+    count = 0
     
     try:
         # Get merged PRs (limit to recent ones to avoid rate limits)
         prs = repo.get_pulls(state="closed", sort="updated", direction="desc")
         
-        count = 0
-        for pr in tqdm(prs, desc="Fetching PR history"):
+        for pr in tqdm(prs, desc="Fetching PR history efficiently", total=max_prs):
             if count >= max_prs:  # Apply user-specified limit
-                logger.info(f"Reached maximum PR limit ({max_prs}), stopping...")
+                logger.info(f"✅ Reached maximum PR limit ({max_prs}), stopping...")
                 break
                 
             if pr.merged:
                 try:
-                    # Get PR files and their diffs
-                    files = pr.get_files()
-                    pr_content = f"Title: {pr.title}\nDescription: {pr.body or 'No description'}\n\n"
+                    # OPTIMIZATION: Limit file processing to avoid huge PRs
+                    files = list(pr.get_files())
+                    max_files_to_process = 10  # Only process first 10 files for efficiency
+                    files_to_process = files[:max_files_to_process]
                     
-                    # Add file changes
-                    for file in files:
-                        if file.patch:  # Some files might not have patches (binary files, etc.)
-                            pr_content += f"File: {file.filename}\nStatus: {file.status}\n"
-                            pr_content += f"Diff:\n{file.patch}\n\n"
+                    # Start with PR metadata
+                    pr_description = pr.body or "No description"
+                    if len(pr_description) > 1500:
+                        pr_description = pr_description[:1500] + "...[truncated]"
+                    
+                    pr_content = f"Title: {pr.title}\nDescription: {pr_description}\n"
+                    
+                    # Add file changes with size limits
+                    diff_content = ""
+                    total_diff_size = 0
+                    max_total_diff_size = 8000  # Limit total diff content
+                    
+                    for file in files_to_process:
+                        if file.patch and total_diff_size < max_total_diff_size:
+                            # Limit individual file patch size
+                            file_patch = file.patch
+                            if len(file_patch) > 2000:
+                                file_patch = file_patch[:2000] + "\n...[diff truncated]"
+                            
+                            file_diff = f"\nFile: {file.filename}\nStatus: {file.status}\nDiff:\n{file_patch}\n"
+                            
+                            # Check if adding this diff would exceed our limit
+                            if total_diff_size + len(file_diff) > max_total_diff_size:
+                                diff_content += f"\n[Additional files truncated for size...]"
+                                break
+                                
+                            diff_content += file_diff
+                            total_diff_size += len(file_diff)
+                    
+                    pr_content += diff_content
+                    
+                    # Add summary if we truncated files
+                    if len(files) > max_files_to_process:
+                        pr_content += f"\n[Note: Processed {max_files_to_process} of {len(files)} files]"
                     
                     pr_data.append({
                         "source": f"PR #{pr.number}",
@@ -389,18 +592,25 @@ def fetch_repo_pr_history(repo, max_prs=50):
                         "pr_number": pr.number,
                         "pr_title": pr.title,
                         "pr_url": pr.html_url,
-                        "merged_at": pr.merged_at.isoformat() if pr.merged_at else None
+                        "merged_at": pr.merged_at.isoformat() if pr.merged_at else None,
+                        "files_count": len(files),
+                        "files_processed": len(files_to_process)
                     })
                     count += 1
                     
+                    # Progress feedback every 10 PRs
+                    if count % 10 == 0:
+                        logger.info(f"📊 Processed {count}/{max_prs} PRs...")
+                    
                 except Exception as e:
-                    logger.warning(f"Error fetching PR #{pr.number}: {e}")
+                    logger.warning(f"⚠️ Error fetching PR #{pr.number}: {e}")
                     continue
                     
     except Exception as e:
-        logger.error(f"Error fetching PR history: {e}")
+        logger.error(f"❌ Error fetching PR history: {e}")
     
-    logger.info(f"Found {len(pr_data)} merged PRs.")
+    efficiency_msg = f"merged PRs with optimized diff processing"
+    logger.info(f"✅ PR fetching complete: {len(pr_data)} {efficiency_msg}")
     return pr_data
 
 
@@ -469,98 +679,194 @@ def fetch_repo_docs_api(repo):
     return docs
 
 def fetch_repo_issues(repo, max_issues=100):
-    """Fetches open and closed issues from the repository with a limit."""
-    logger.info(f"Fetching issues (max: {max_issues})...")
+    """Optimized issue fetching with smart content filtering and reduced processing time."""
+    logger.info(f"🚀 OPTIMIZED issue fetching (max: {max_issues})...")
     issues_data = []
-    issues = repo.get_issues(state="all")
     issue_count = 0
     
-    # Apply limit for issues as requested
-    for issue in tqdm(issues, desc="Fetching issues"):
-        if issue_count >= max_issues:
-            logger.info(f"Reached maximum issue limit ({max_issues}), stopping...")
-            break
-            
-        # Combine title, body, and comments for a complete context
-        try:
-            comments_text = "\n".join([comment.body for comment in issue.get_comments()])
-            full_issue_text = f"Title: {issue.title}\nBody: {issue.body}\nComments:\n{comments_text}"
-            
-            issues_data.append({
-                "source": f"issue #{issue.number}",
-                "content": full_issue_text,
-                "type": "issue"
-            })
-            issue_count += 1
-        except Exception as e:
-            logger.warning(f"Error processing issue #{issue.number}: {e}")
-            issue_count += 1  # Still count it toward the limit
-            
-    logger.info(f"Found {len(issues_data)} issues.")
+    try:
+        # Get issues with optimized ordering (recent first)
+        issues = repo.get_issues(state="all", sort="updated", direction="desc")
+        
+        # Apply limit for issues as requested with progress tracking
+        for issue in tqdm(issues, desc="Fetching issues efficiently", total=max_issues):
+            if issue_count >= max_issues:
+                logger.info(f"✅ Reached maximum issue limit ({max_issues}), stopping...")
+                break
+                
+            try:
+                # OPTIMIZATION: Limit comment fetching to reduce API calls and processing time
+                max_comments = 5  # Only get first 5 comments for context
+                comments = list(issue.get_comments())[:max_comments]
+                
+                # Build issue content with size limits
+                comments_text = ""
+                if comments:
+                    comment_parts = []
+                    for comment in comments:
+                        if comment.body and len(comment.body.strip()) > 10:
+                            # Limit comment length to prevent huge issues
+                            comment_text = comment.body[:1000] + "..." if len(comment.body) > 1000 else comment.body
+                            comment_parts.append(comment_text)
+                        
+                        # Stop if we have enough comment content
+                        if len("\n".join(comment_parts)) > 2000:
+                            break
+                    
+                    comments_text = "\n---\n".join(comment_parts)
+                
+                # Limit issue body size
+                issue_body = issue.body or ""
+                if len(issue_body) > 3000:
+                    issue_body = issue_body[:3000] + "...[truncated]"
+                
+                # Create concise but informative issue content
+                full_issue_text = f"Title: {issue.title}\nState: {issue.state}\nBody: {issue_body}"
+                if comments_text:
+                    full_issue_text += f"\nComments:\n{comments_text}"
+                
+                issues_data.append({
+                    "source": f"issue #{issue.number}",
+                    "content": full_issue_text,
+                    "type": "issue",
+                    "issue_number": issue.number,
+                    "issue_title": issue.title,
+                    "issue_url": issue.html_url,
+                    "created_at": issue.created_at.isoformat() if issue.created_at else None,
+                    "state": issue.state
+                })
+                issue_count += 1
+                
+                # Progress feedback every 25 issues
+                if issue_count % 25 == 0:
+                    logger.info(f"📊 Processed {issue_count}/{max_issues} issues...")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error processing issue #{issue.number}: {e}")
+                issue_count += 1  # Still count it toward the limit
+                continue
+                
+    except Exception as e:
+        logger.error(f"❌ Error fetching issues: {e}")
+    
+    efficiency_msg = f"issues with optimized content filtering"
+    logger.info(f"✅ Issue fetching complete: {len(issues_data)} {efficiency_msg}")
     return issues_data
 
 # --- PROCESSING & UPSERTING ---
 async def chunk_and_embed_and_store(documents, embeddings, collection_name: str, repo_name: str = None):
-    """Chunks documents, creates embeddings, and stores in Chroma collection with async processing."""
-    # Different chunking strategies based on content type
-    standard_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    """Optimized chunking and embedding with performance improvements and timeout prevention."""
+    import time
     
-    # More conservative chunking for issues and PRs to prevent explosion
-    issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=200)
+    # OPTIMIZED CHUNKING STRATEGIES - Much larger chunks to reduce total count
+    # Documentation: Large chunks for better context, minimal splitting
+    doc_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
     
-    batch_size = 50  # Smaller batches for better responsiveness
+    # Code: Even larger chunks to preserve function/class integrity
+    code_splitter = RecursiveCharacterTextSplitter(chunk_size=6000, chunk_overlap=300)
+    
+    # Issues/PRs: Moderate chunks but aggressive limits
+    issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=250)
+    
+    # PERFORMANCE OPTIMIZATIONS
+    batch_size = 100  # Larger batches for efficiency
+    embedding_batch_size = 100  # Much larger embedding batches
     total_documents_stored = 0
     total_chunks_created = 0
+    start_time = time.time()
     
-    logger.info(f"Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
+    logger.info(f"🚀 OPTIMIZED Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
+    logger.info(f"📊 Target: Minimize chunks while preserving quality for {collection_name}")
     
     # Create/get the Chroma collection with repository-specific naming
     chroma_collection = create_chroma_collection(embeddings, collection_name, repo_name)
     
-    for i in tqdm(range(0, len(documents), batch_size), desc=f"Processing {collection_name} in batches"):
+    # Process in larger batches for efficiency
+    for i in tqdm(range(0, len(documents), batch_size), desc=f"Processing {collection_name} efficiently"):
+        batch_start_time = time.time()
         batch_docs = documents[i:i + batch_size]
         
         all_chunks = []
         all_metadatas = []
         batch_chunks_created = 0
         
-        # 1. Chunking and metadata preparation
+        # 1. INTELLIGENT CHUNKING based on content importance
         for doc_idx, doc in enumerate(batch_docs):
             doc_type = doc.get("type", "")
             content = doc["content"]
             content_length = len(content)
             
-            # Smart chunking strategy based on document type and size
-            if doc_type == "code" and content_length <= 2000:
-                # Don't chunk small code blocks
-                chunks = [content]
-            elif doc_type in ["issue", "pr"] and content_length <= 4000:
-                # Don't chunk small issues/PRs - keep them as single documents
-                chunks = [content]
+            # CONTENT-AWARE CHUNKING STRATEGY
+            if doc_type == "doc":
+                # DOCUMENTATION - Highest priority, preserve context
+                if content_length <= 3000:
+                    # Small docs: keep whole for perfect context
+                    chunks = [content]
+                elif content_length <= 8000:
+                    # Medium docs: minimal chunking
+                    chunks = doc_splitter.split_text(content)
+                    if len(chunks) > 3:
+                        # Merge small chunks to reduce total count
+                        merged_chunks = []
+                        current_chunk = ""
+                        for chunk in chunks:
+                            if len(current_chunk + chunk) <= 5000:
+                                current_chunk += "\n\n" + chunk if current_chunk else chunk
+                            else:
+                                if current_chunk:
+                                    merged_chunks.append(current_chunk)
+                                current_chunk = chunk
+                        if current_chunk:
+                            merged_chunks.append(current_chunk)
+                        chunks = merged_chunks[:3]  # Max 3 chunks for docs
+                else:
+                    # Large docs: controlled chunking
+                    chunks = doc_splitter.split_text(content)[:4]  # Max 4 chunks for large docs
+                    
+            elif doc_type == "code":
+                # CODE - Second highest priority, preserve function boundaries
+                if content_length <= 4000:
+                    # Small code: keep whole to preserve structure
+                    chunks = [content]
+                elif content_length <= 10000:
+                    # Medium code: careful chunking
+                    chunks = code_splitter.split_text(content)
+                    if len(chunks) > 2:
+                        chunks = chunks[:2]  # Max 2 chunks for code files
+                else:
+                    # Large code: strategic chunking
+                    chunks = code_splitter.split_text(content)[:3]  # Max 3 chunks for large code
+                    
             elif doc_type in ["issue", "pr"]:
-                # Use larger chunks for issues and PRs, limit to max 3 chunks per document
-                chunks = issue_pr_splitter.split_text(content)
-                # Limit chunks per issue/PR to prevent explosion
-                if len(chunks) > 3:
-                    logger.warning(f"Large {doc_type} with {len(chunks)} chunks, truncating to 3 chunks")
-                    chunks = chunks[:3]
+                # ISSUES/PRs - Can be more aggressive to save processing time
+                if content_length <= 6000:
+                    # Small/medium: keep whole
+                    chunks = [content]
+                else:
+                    # Large: aggressive chunking with strict limits
+                    chunks = issue_pr_splitter.split_text(content)
+                    chunks = chunks[:2]  # Max 2 chunks for issues/PRs
             else:
-                # Standard chunking for documentation and other content
-                chunks = standard_splitter.split_text(content)
+                # Fallback: Conservative chunking
+                if content_length <= 4000:
+                    chunks = [content]
+                else:
+                    chunks = doc_splitter.split_text(content)[:3]
             
             batch_chunks_created += len(chunks)
             
+            # Create metadata efficiently
             for j, chunk in enumerate(chunks):
-                # Create enhanced metadata based on document type
                 metadata = {
                     "source": doc["source"],
                     "type": doc_type,
                     "collection_name": collection_name,
                     "chunk_index": j,
-                    "original_doc_length": content_length
+                    "original_doc_length": content_length,
+                    "total_chunks": len(chunks)
                 }
                 
-                # Add type-specific metadata
+                # Add type-specific metadata only when needed
                 if doc_type == "code":
                     metadata.update({
                         "filePath": doc.get("filePath", ""),
@@ -589,50 +895,67 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
                 all_chunks.append(chunk)
                 all_metadatas.append(metadata)
             
-            # Yield control every 5 documents to prevent timeouts
-            if doc_idx % 5 == 0:
-                await asyncio.sleep(0)
+            # Smart yielding based on time and count
+            if doc_idx % 10 == 0 or time.time() - batch_start_time > 2.0:
+                await asyncio.sleep(0.01)  # Micro-yield to prevent timeout
         
         total_chunks_created += batch_chunks_created
-        logger.info(f"Batch {i//batch_size + 1}: {len(batch_docs)} documents → {batch_chunks_created} chunks (total chunks so far: {total_chunks_created})")
+        batch_time = time.time() - batch_start_time
+        
+        # Enhanced progress logging
+        logger.info(f"📦 Batch {i//batch_size + 1}: {len(batch_docs)} docs → {batch_chunks_created} chunks (⏱️ {batch_time:.1f}s)")
+        logger.info(f"📊 Total progress: {total_chunks_created} chunks from {i + len(batch_docs)} docs")
         
         if not all_chunks:
             continue
 
-        # 2. Create Document objects for Chroma
+        # 2. EFFICIENT DOCUMENT CREATION
         langchain_docs = [
             Document(page_content=chunk, metadata=metadata)
             for chunk, metadata in zip(all_chunks, all_metadatas)
         ]
         
-        # 3. Add to Chroma collection in smaller sub-batches with async yielding
-        sub_batch_size = 25  # Even smaller batches for better responsiveness
-        for start in range(0, len(langchain_docs), sub_batch_size):
-            end = start + sub_batch_size
+        # 3. OPTIMIZED EMBEDDING AND STORAGE
+        # Use much larger batches for embedding efficiency
+        for start in range(0, len(langchain_docs), embedding_batch_size):
+            end = start + embedding_batch_size
             sub_batch = langchain_docs[start:end]
+            embed_start_time = time.time()
             
             try:
-                # Run embedding and storage in thread to avoid blocking event loop
-                logger.info(f"Embedding and storing {len(sub_batch)} documents...")
+                # Single large embedding call for efficiency
                 await asyncio.to_thread(chroma_collection.add_documents, sub_batch)
                 total_documents_stored += len(sub_batch)
-                logger.info(f"Stored {len(sub_batch)} documents. Total: {total_documents_stored}")
+                embed_time = time.time() - embed_start_time
                 
-                # Yield control after each sub-batch
-                await asyncio.sleep(0)
+                # Concise progress logging
+                logger.info(f"✅ Embedded {len(sub_batch)} chunks (⏱️ {embed_time:.1f}s) | Total: {total_documents_stored}")
+                
+                # Intelligent yielding based on time
+                if embed_time > 1.0:
+                    await asyncio.sleep(0.05)  # Longer yield for slow operations
+                else:
+                    await asyncio.sleep(0.01)  # Quick yield for fast operations
                 
             except Exception as e:
-                logger.error(f"Error adding batch to Chroma: {e}")
+                logger.error(f"❌ Embedding error: {e}")
                 continue
-            
-    # Note: Chroma automatically persists to disk when using persist_directory
+        
+        # Progress checkpoint every batch
+        total_time = time.time() - start_time
+        if total_time > 10:  # Every 10 seconds, give progress update
+            remaining_docs = len(documents) - (i + len(batch_docs))
+            logger.info(f"🔄 PROGRESS: {total_documents_stored} chunks stored | {remaining_docs} docs remaining")
+            start_time = time.time()  # Reset timer
     
-    logger.info(f"Finished {collection_name}. Total documents processed: {len(documents)} → Total chunks created and stored: {total_documents_stored}")
+    # Final summary with efficiency metrics
+    total_time = time.time() - start_time
+    efficiency_ratio = len(documents) / total_documents_stored if total_documents_stored > 0 else 0
     
-    # Log summary for issues and PRs to show chunking results
-    if collection_name in ["issues_history", "pr_history"]:
-        avg_chunks_per_doc = total_documents_stored / len(documents) if len(documents) > 0 else 0
-        logger.info(f"Chunking summary: {len(documents)} {collection_name.split('_')[0]}s → {total_documents_stored} chunks (avg: {avg_chunks_per_doc:.1f} chunks per {collection_name.split('_')[0]})")
+    logger.info(f"🎉 COMPLETED {collection_name}:")
+    logger.info(f"  📄 {len(documents)} documents → 📦 {total_documents_stored} chunks")
+    logger.info(f"  📊 Efficiency ratio: {efficiency_ratio:.2f} docs/chunk (higher = better)")
+    logger.info(f"  ⏱️  Total time: {total_time:.1f} seconds")
     
     return total_documents_stored
 

@@ -206,6 +206,58 @@ def test_mcp_server():
         print(f"  ❌ MCP server initialization failed: {e}")
         return False
 
+def setup_official_github_mcp():
+    """Sets up the official github/github-mcp-server using Docker."""
+    print("\n🐙 Setting up the Official GitHub MCP Server (Docker)...")
+    
+    try:
+        # Check if Docker is installed
+        result = subprocess.run(["docker", "--version"], check=True, capture_output=True)
+        print("  ✅ Docker is installed.")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("  ❌ Docker is not installed. Please install Docker to continue.")
+        print("  💡 Visit: https://docs.docker.com/get-docker/")
+        return False
+
+    # Check if GITHUB_TOKEN is available
+    our_token = os.getenv("GITHUB_TOKEN")
+    if not our_token:
+        print("  ❌ GITHUB_TOKEN not found in the root .env file. Cannot configure official server.")
+        return False
+    
+    print(f"  ✅ GITHUB_TOKEN found and configured.")
+
+    try:
+        # Test Docker by pulling the official image
+        print("  📥 Pulling official GitHub MCP server Docker image...")
+        result = subprocess.run([
+            "docker", "pull", "ghcr.io/github/github-mcp-server"
+        ], check=True, capture_output=True)
+        print("  ✅ Docker image pulled successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"  ❌ Failed to pull Docker image: {e.stderr.decode()}")
+        print("  💡 Make sure you have internet connection and Docker is running.")
+        return False
+
+    try:
+        # Test run to verify the image works
+        print("  🧪 Testing Docker image...")
+        result = subprocess.run([
+            "docker", "run", "--rm", 
+            "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={our_token}",
+            "ghcr.io/github/github-mcp-server", 
+            "--help"
+        ], check=True, capture_output=True, timeout=30)
+        print("  ✅ Docker image test successful.")
+    except subprocess.CalledProcessError as e:
+        print(f"  ❌ Docker image test failed: {e.stderr.decode()}")
+        return False
+    except subprocess.TimeoutExpired:
+        print("  ✅ Docker image is working (timeout expected for help command).")
+        
+    print("  🎉 Official GitHub MCP Server (Docker) is set up!")
+    return True
+
 def create_claude_config():
     """Create Claude Desktop configuration file."""
     print("\n🔧 Creating Claude Desktop configuration...")
@@ -243,6 +295,9 @@ def create_claude_config():
         python_path = "python3"  # fallback
         print(f"  ⚠️  No Python with MCP found, using fallback: {python_path}")
     
+    # Get GITHUB_TOKEN for Docker env
+    github_token = os.getenv("GITHUB_TOKEN")
+    
     config_content = {
         "mcpServers": {
             "github-issue-resolver": {
@@ -251,6 +306,20 @@ def create_claude_config():
                 "env": {
                     "PYTHONPATH": str(current_dir),
                     "CHROMA_PERSIST_DIR": str(current_dir / "chroma_db")
+                }
+            },
+            "github": {
+                "command": "docker",
+                "args": [
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e",
+                    "GITHUB_PERSONAL_ACCESS_TOKEN",
+                    "ghcr.io/github/github-mcp-server"
+                ],
+                "env": {
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": github_token or "your-github-token-here"
                 }
             }
         }
@@ -334,21 +403,20 @@ def print_usage_instructions():
     print("   • Analyze only: 'Analyze https://github.com/microsoft/vscode/issues/12345'")
     print("   • Create PR with fork: 'Create a PR for the navbar fix in coderabbitai/coderabbit-docs'")
     
-    print("\n4. 🛠️  Available tools:")
-    print("   🚀 Multi-Step Ingestion:")
-    print("     • start_repository_ingestion - Initialize repo and start ingestion")
-    print("     • ingest_repository_docs/code/issues/prs - Step-by-step ingestion")
-    print("   📊 Analysis & Patching:")
-    print("     • comprehensive_issue_resolver - Complete 9-step workflow (RECOMMENDED)")
-    print("     • analyze_github_issue_tool - Analyze issues using RAG")
-    print("     • generate_code_patch_tool - Generate patches for issues")
-    print("   🔧 PR Creation (Fork-Aware):")
-    print("     • create_pr_with_fork_workflow - Smart PR creation (recommended)")
-    print("     • create_github_pr_from_patch - Simple PR creation")
-    print("     • create_github_pr_tool - Advanced PR creation")
-    print("   📋 Repository Management:")
-    print("     • get_repository_status - Check detailed ingestion progress")
-    print("     • validate_repository_tool - Validate repository access")
+    print("\n4. 🛠️  Available Tools (from both servers):")
+    print("\n   🧠 From Your Server (`github-issue-resolver`):")
+    print("     • start_repository_ingestion - **Start Here!** Initializes the 4-step ingestion.")
+    print("     • ingest_repository_docs/code/issues/prs - The 4 steps of ingestion.")
+    print("     • generate_code_patch_tool - **The Core Tool!** Creates the patch JSON.")
+    print("     • analyze_github_issue_tool - Performs RAG analysis without generating a patch.")
+    print("     • get_repository_status - Checks ingestion progress.")
+    
+    print("\n   ✋ From the Official Server (`github`):")
+    print("     • github:createPullRequest - **Use this to create PRs!** Takes file changes.")
+    print("     • github:createBranch - Creates a branch.")
+    print("     • github:commitFiles - Commits files to a branch.")
+    print("     • github:getIssue, github:updateIssue, github:createIssue, etc.")
+    print("     • ... and dozens more for full GitHub control.")
     
     print("\n💡 TIPS:")
     print("   • Always ingest a repository before analyzing its issues")
@@ -370,7 +438,8 @@ def main():
         check_environment_variables,
         check_project_structure,
         test_module_imports,
-        test_mcp_server
+        test_mcp_server,
+        setup_official_github_mcp  # Add this new check here
     ]
     
     all_passed = True

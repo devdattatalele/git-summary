@@ -27,7 +27,7 @@ from googleapiclient.discovery import build
 # --- Patch Generator Import ---
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from .patch import generate_and_create_pr
+
 
 # --- Configuration ---
 load_dotenv()
@@ -130,79 +130,82 @@ def initialize_chroma_retriever(repo_name: str = None):
         raise Exception(f"Failed to initialize Chroma retriever: {e}")
 
 def create_langchain_agent(issue):
-    """Creates and runs the LangChain agent to analyze the issue."""
-    logger.info("Initializing LangChain Agent...")
+    """
+    Analyzes a GitHub issue using a direct RAG chain, which is more reliable than a ReAct agent.
+    """
+    logger.info("Initializing LangChain RAG Chain...")
     try:
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
             temperature=0.2, 
             google_api_key=GOOGLE_API_KEY,
-            max_retries=2,  # Reduce retries to avoid long waits
-            request_timeout=30  # Shorter timeout
+            max_retries=2,
+            request_timeout=45
         )
-        # Pass repository name to use repository-specific collection
+        
         repo_name = issue.repository.full_name
-        retriever_tool = initialize_chroma_retriever(repo_name)
-        tools = [retriever_tool]
+        # Build a retriever directly for this repository's issues collection
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=GOOGLE_API_KEY,
+        )
+        safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
+        collection_name = f"{safe_repo_name}_{COLLECTION_ISSUES}"
+        chroma_store = Chroma(
+            embedding_function=embeddings,
+            persist_directory=CHROMA_PERSIST_DIR,
+            collection_name=collection_name,
+        )
+        retriever = chroma_store.as_retriever(search_kwargs={"k": 5})
+        
+        # Retrieve context up-front to keep the chain deterministic and quiet
+        query = f"Title: {issue.title}\nBody: {issue.body or 'No body.'}"
+        docs = retriever.get_relevant_documents(query)
+        context_text = "\n\n".join(doc.page_content for doc in docs)
+        
+        # Prompt instructs the model to return a strict JSON object
+        template = """
+        You are an expert AI software engineer analyzing a GitHub issue for the '{repo_full_name}' repository.
+        Use the following retrieved context from past issues and documentation to provide a detailed analysis.
 
-        # Enhanced prompt template with better instructions
-        prompt_template = """
-        You are an expert AI assistant for the '{repo_full_name}' repository.
-        Your task is to analyze a new GitHub issue using the context retrieved from the knowledge base.
+        **Retrieved Context:**
+        {context}
 
-        You have access to the following tools:
-        {tools}
-
-        Use the following format:
-
-        Question: the input question you must answer
-        Thought: you should always think about what to do
-        Action: the action to take, should be one of [{tool_names}]
-        Action Input: the input to the action
-        Observation: the result of the action
-        ... (this Thought/Action/Action Input/Observation can repeat N times)
-        Thought: I now know the final answer
-        Final Answer: the final answer to the original input question
-
-        IMPORTANT: Your Final Answer MUST be a valid JSON object with exactly these keys:
-        1. "summary": A concise, one-sentence summary of the user's problem.
-        2. "proposed_solution": A detailed step-by-step technical plan to solve the issue. This should contain specific file paths, directory locations, and line numbers that need to be updated, along with the problem description and the solution. If the context contains a similar solved issue, reference it and adapt the solution. Use newline characters for formatting.
-        3. "complexity": An integer from 1 to 5 (1=Trivial, 5=Very Complex).
-        4. "similar_issues": An array of strings containing the source of any relevant past issues from the context (e.g., ["issue #123", "issue #456"]). If no relevant issues are found, return an empty array [].
-
-        First, search the knowledge base for relevant context, then provide your analysis.
-
-        New Issue Details:
-        - Repository: {repo_full_name}
+        **Current Issue Details:**
         - Title: {issue_title}
         - Body: {issue_body}
-        - Issue URL: {issue_url}
+        - URL: {issue_url}
 
-        Question: Please analyze this GitHub issue and provide a comprehensive analysis in JSON format.
-        {agent_scratchpad}
+        **Your Task:**
+        Based on the context and the current issue, provide a final answer as a valid JSON object with exactly these keys:
+        1. "summary": A concise, one-sentence summary of the user's problem.
+        2. "proposed_solution": A detailed, step-by-step technical plan to solve the issue. Be specific about files to modify. If the context provides a clear solution, adapt it. If not, propose a logical first step.
+        3. "complexity": An integer from 1 to 5 (1=Trivial, 5=Very Complex).
+        4. "similar_issues": An array of strings containing the source of any relevant past issues from the context (e.g., ["issue #123", "PR #456"]). If no relevant issues are found, return an empty array [].
+
+        **Final Answer (JSON object):**
         """
-        
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        
-        agent = create_react_agent(llm, tools, prompt)
-        agent_executor = AgentExecutor(
-            agent=agent, 
-            tools=tools, 
-            verbose=True,
-            max_iterations=8,  # Reduced to save API calls
-            handle_parsing_errors=True
-        )
+        prompt = ChatPromptTemplate.from_template(template)
 
-        logger.info("Running agent to analyze issue...")
-        response = agent_executor.invoke({
-            "repo_full_name": issue.repository.full_name,
+        # Create a more reliable RAG chain using LCEL
+        from langchain_core.output_parsers import StrOutputParser
+
+        rag_chain = prompt | llm | StrOutputParser()
+
+        logger.info("Running RAG chain to analyze issue...")
+        
+        # Prepare the input for the chain
+        inputs = {
+            "context": context_text,
             "issue_title": issue.title,
             "issue_body": issue.body or "No body provided.",
-            "issue_url": issue.html_url
-        })
+            "issue_url": issue.html_url,
+            "repo_full_name": repo_name
+        }
         
-        return response['output']
-        
+        response = rag_chain.invoke(inputs)
+        return response
+
     except Exception as e:
         error_message = str(e)
         
@@ -212,8 +215,8 @@ def create_langchain_agent(issue):
             return create_fallback_analysis(issue)
         
         # Handle other errors
-        logger.error(f"Agent error: {error_message}")
-        raise Exception(f"Failed to run LangChain agent: {e}")
+        logger.error(f"RAG chain error: {error_message}")
+        raise Exception(f"Failed to run LangChain RAG chain: {e}")
 
 def create_fallback_analysis(issue):
     """Create a basic analysis without LLM when rate limits are hit."""
@@ -301,9 +304,8 @@ def create_fallback_analysis(issue):
         "similar_issues": similar_issues
     }
     
-    # Return as JSON string to match expected format
-    import json
-    return json.dumps(fallback_json, indent=2)
+    # Return as dictionary object, not JSON string
+    return fallback_json
 
 def parse_agent_output(raw_output: str):
     """Extracts and parses the JSON from the agent's raw output string."""
@@ -395,12 +397,13 @@ def generate_patches_for_issue(issue, analysis):
         complexity = analysis.get('complexity', 5)
         issue_body = f"Title: {issue.title}\n\nBody: {issue.body or 'No description provided.'}"
         
-        result = generate_and_create_pr(
+        # Import patch generation function
+        from .patch import generate_patch_for_issue
+        
+        # Generate patches only (PR creation is now handled by the official GitHub server)
+        result = generate_patch_for_issue(
             issue_body=issue_body,
-            repo_full_name=issue.repository.full_name,
-            issue_number=issue.number,
-            complexity=complexity,
-            max_complexity=MAX_COMPLEXITY_FOR_AUTO_PR
+            repo_full_name=issue.repository.full_name
         )
         
         return result

@@ -25,8 +25,6 @@ from .ingest import (
 from .patch import (
     initialize_chroma_clients,
     generate_patch_for_issue,
-    create_pr,
-    generate_and_create_pr,
 )
 
 from .server import mcp
@@ -48,8 +46,6 @@ __all__ = [
     # patch
     "initialize_chroma_clients",
     "generate_patch_for_issue",
-    "create_pr",
-    "generate_and_create_pr",
     # server
     "mcp",
 ] 

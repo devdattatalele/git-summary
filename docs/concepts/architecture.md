@@ -1,24 +1,64 @@
-# Architecture
+# Dual-MCP Server Architecture
 
-The system is built on a modern Python AI stack, designed for modularity and scalability.
+The system is built on a revolutionary dual-server architecture that combines specialized AI analysis with robust GitHub automation, designed for enterprise-scale modularity and reliability.
 
-### Core Components
+## Architecture Overview
 
--   **`issue_solver` Package:** The main Python package containing all the core logic.
-    -   `ingest.py`: Handles cloning repositories and populating the knowledge base.
-    -   `analyze.py`: Contains the LangChain agent and logic for analyzing issues.
-    -   `patch.py`: Responsible for generating code patches.
-    -   `server.py`: Runs the FastMCP server to expose the tools to an AI agent.
--   **`scripts/`:** Contains standalone scripts, primarily the `client.py` used to interact with the MCP server.
--   **`tests/`:** Contains integration and unit tests.
--   **`docs/`:** Contains all the Markdown files for this documentation site.
--   **`chroma_db/`:** The directory where the ChromaDB vector stores are persisted.
+Our dual-MCP server architecture separates concerns into two specialized servers:
 
-### Technologies
+### 🧠 Analysis Server (`github-issue-resolver`)
+**Role**: The "Brain" - Intelligent analysis and patch generation
 
--   **AI/LLM:** Google Gemini (gemini-2.5-flash, embedding-001)
--   **Framework:** LangChain
--   **Vector Database:** ChromaDB
+### ✋ GitHub Server (`github/github-mcp-server`) 
+**Role**: The "Hands" - Robust GitHub operations via Docker
+
+## Core Components
+
+### Analysis Server Components
+
+-   **`github_issue_mcp_server.py`:** Main custom MCP server with FastMCP
+-   **`issue_solver/` Package:** Core AI analysis logic
+    -   `ingest.py`: 4-step repository ingestion with performance optimization
+    -   `analyze.py`: LangChain RAG chains for reliable issue analysis
+    -   `patch.py`: Intelligent patch generation with repository context
+-   **`chroma_db/`:** Repository-specific vector stores with isolated knowledge bases
+-   **`config/`:** Dual-server configuration for Claude Desktop
+
+### GitHub Server Components
+
+-   **Docker Container:** `ghcr.io/github/github-mcp-server`
+-   **Go Implementation:** High-performance GitHub API operations
+-   **Complete GitHub API:** Full access to all GitHub functionality
+-   **Enterprise-Grade:** Robust, production-ready GitHub integration
+
+### Supporting Infrastructure
+
+-   **`examples/`:** Integration examples and client code
+-   **`tests/`:** Comprehensive integration and unit tests
+-   **`docs/`:** Complete documentation site
+-   **`setup_mcp_server.py`:** Automated dual-server setup and configuration
+
+## Technology Stack
+
+### Analysis Server (Brain) Technologies
+
+-   **AI/LLM:** Google Gemini 2.5-Flash (latest model)
+-   **Framework:** LangChain with RAG chains (non-verbose for reliability)
+-   **Vector Database:** ChromaDB with repository isolation
 -   **Server Protocol:** Model Context Protocol (MCP) via FastMCP
--   **GitHub Integration:** PyGithub
--   **Documentation:** MkDocs with the Material theme 
+-   **GitHub Integration:** PyGithub for data access
+-   **Performance:** Optimized chunking and batch processing
+
+### GitHub Server (Hands) Technologies
+
+-   **Implementation:** Official Go-based GitHub MCP server
+-   **Deployment:** Docker containerization for reliability
+-   **GitHub API:** Complete GitHub API coverage
+-   **Authentication:** Secure token-based authentication
+-   **Operations:** Branch management, PR creation, issue handling
+
+### Infrastructure Technologies
+
+-   **Orchestration:** Claude Desktop MCP client
+-   **Documentation:** MkDocs with Material theme
+-   **Development:** Python 3.8+, Docker, comprehensive testing 

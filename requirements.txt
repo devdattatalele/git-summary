@@ -48,6 +48,14 @@ google-ai-generativelanguage==0.6.10
 
 # Additional MCP dependencies for client/server communication
 # Note: These are typically included with mcp==1.2.0 but listing explicitly for clarity 
+
+# Enhanced logging
+loguru
+
+# Offline embeddings
+fastembed
+langchain-community
+
 # Documentation
 mkdocs
 mkdocs-material

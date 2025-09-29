@@ -5,7 +5,7 @@ MCP tools for the multi-step repository ingestion process including
 documentation, code analysis, issues history, and PR history.
 """
 
-import logging
+from loguru import logger
 from typing import Dict, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -14,7 +14,6 @@ from ..services.ingestion_service import IngestionService
 from ..models import IngestionStep, IngestionStatus
 from ..exceptions import IngestionError, RepositoryError
 
-logger = logging.getLogger(__name__)
 
 
 def register_ingestion_tools(

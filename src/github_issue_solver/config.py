@@ -6,14 +6,12 @@ with proper error handling and security practices.
 """
 
 import os
-import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
+from loguru import logger
 
 from .exceptions import ConfigurationError
-
-logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -51,6 +49,8 @@ class Config:
             "HEALTH_CHECK_INTERVAL": "300",  # 5 minutes
             "RETRY_ATTEMPTS": "3",
             "RETRY_DELAY": "1",
+            "EMBEDDING_PROVIDER": "google",  # 'google' or 'fastembed'
+            "EMBEDDING_MODEL_NAME": "BAAI/bge-small-en-v1.5",  # Model for FastEmbed
         }
         
         # Initialize configuration
@@ -119,9 +119,13 @@ class Config:
             "prs": "pr_history"
         }
         
-        # Gemini model configuration
-        self.gemini_embedding_model = "models/embedding-001"
-        self.gemini_chat_model = "gemini-1.5-flash"
+        # Embedding configuration
+        self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "google").lower()
+        self.embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5")
+        
+        # Gemini model configuration (keep the existing ones)
+        self.gemini_embedding_model = "models/embedding-004"
+        self.gemini_chat_model = "gemini-1.5-pro-latest"  # Updated to a more recent model
         
     def get_collection_name(self, repo_name: str, collection_type: str) -> str:
         """

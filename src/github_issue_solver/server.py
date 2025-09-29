@@ -9,11 +9,11 @@ robust error handling, and comprehensive health monitoring.
 """
 
 import asyncio
-import logging
 import sys
 import traceback
 from typing import Dict, Any
 from datetime import datetime
+from loguru import logger
 
 from mcp.server.fastmcp import FastMCP
 
@@ -22,19 +22,14 @@ from .exceptions import GitHubIssueSolverError, ConfigurationError
 from .services import (
     StateManager,
     RepositoryService,
+    EmbeddingService,
     IngestionService,
     AnalysisService,
     PatchService,
     HealthService
 )
 
-# Configure logging to stderr only (critical for MCP servers)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stderr)]
-)
-logger = logging.getLogger(__name__)
+# Loguru logger is already configured in main.py
 
 
 class GitHubIssueSolverServer:
@@ -85,11 +80,15 @@ class GitHubIssueSolverServer:
             self.services['state_manager'] = StateManager(self.config)
             self.services['repository'] = RepositoryService(self.config)
             
+            # Initialize EmbeddingService first
+            self.services['embedding'] = EmbeddingService(self.config)
+            
             # Business logic services
             self.services['ingestion'] = IngestionService(
                 self.config,
                 self.services['repository'],
-                self.services['state_manager']
+                self.services['state_manager'],
+                self.services['embedding']
             )
             
             self.services['analysis'] = AnalysisService(
@@ -447,19 +446,6 @@ class GitHubIssueSolverServer:
         
         return '\n'.join(lines)
     
-    async def start_monitoring(self) -> None:
-        """Start health monitoring."""
-        if not self._health_monitoring_active:
-            await self.services['health'].start_monitoring()
-            self._health_monitoring_active = True
-            logger.info("Health monitoring started")
-    
-    def stop_monitoring(self) -> None:
-        """Stop health monitoring."""
-        if self._health_monitoring_active:
-            self.services['health'].stop_monitoring()
-            self._health_monitoring_active = False
-            logger.info("Health monitoring stopped")
     
     def run(self, transport: str = 'stdio') -> None:
         """
@@ -488,10 +474,12 @@ class GitHubIssueSolverServer:
             
             logger.info(f"🎯 Starting MCP server with {transport} transport...")
             
-            # Start health monitoring in background
-            asyncio.create_task(self.start_monitoring())
+            # Start health monitoring in background thread
+            self.services['health'].start_monitoring()
+            self._health_monitoring_active = True
+            logger.info("✅ Health monitoring background thread started")
             
-            # Run the FastMCP server
+            # Run the FastMCP server (this blocks until server stops)
             self.mcp.run(transport=transport)
             
         except KeyboardInterrupt:
@@ -501,7 +489,10 @@ class GitHubIssueSolverServer:
             logger.error(traceback.format_exc())
             sys.exit(1)
         finally:
-            self.stop_monitoring()
+            if self._health_monitoring_active:
+                self.services['health'].stop_monitoring()
+                self._health_monitoring_active = False
+                logger.info("Health monitoring stopped")
     
     # Additional formatting methods would go here...
     def _format_repository_info(self, info: Dict[str, Any]) -> str:

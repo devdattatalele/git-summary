@@ -6,19 +6,19 @@ code analysis, issues history, and PR history with proper error handling and rec
 """
 
 import asyncio
-import logging
 import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from loguru import logger
 
 from github.Repository import Repository
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from ..config import Config
 from ..models import IngestionResult, IngestionStep, IngestionStatus
 from ..exceptions import IngestionError
 from ..services.repository_service import RepositoryService
 from ..services.state_manager import StateManager
+from ..services.embedding_service import EmbeddingService
 
 # Import ingestion functions from original modules
 import sys
@@ -30,17 +30,14 @@ from issue_solver.ingest import (
     fetch_repo_code, 
     fetch_repo_issues,
     fetch_repo_pr_history,
-    chunk_and_embed_and_store,
-    initialize_clients as init_ingestion_clients
+    chunk_and_embed_and_store
 )
-
-logger = logging.getLogger(__name__)
 
 
 class IngestionService:
     """Service for repository data ingestion."""
     
-    def __init__(self, config: Config, repository_service: RepositoryService, state_manager: StateManager):
+    def __init__(self, config: Config, repository_service: RepositoryService, state_manager: StateManager, embedding_service: EmbeddingService):
         """
         Initialize ingestion service.
         
@@ -48,26 +45,13 @@ class IngestionService:
             config: Configuration instance
             repository_service: Repository service for GitHub operations
             state_manager: State manager for persistence
+            embedding_service: Service for providing embedding models
         """
         self.config = config
         self.repository_service = repository_service
         self.state_manager = state_manager
-        self._embeddings: Optional[GoogleGenerativeAIEmbeddings] = None
+        self.embedding_service = embedding_service
         
-    async def _get_embeddings(self) -> GoogleGenerativeAIEmbeddings:
-        """Get or create embeddings instance."""
-        if self._embeddings is None:
-            try:
-                _, embeddings = await asyncio.to_thread(init_ingestion_clients)
-                self._embeddings = embeddings
-                logger.info("Embeddings client initialized successfully")
-            except Exception as e:
-                raise IngestionError(
-                    "Failed to initialize embeddings client",
-                    details={"error": str(e)},
-                    cause=e
-                )
-        return self._embeddings
     
     async def start_repository_ingestion(self, repo_name: str) -> IngestionResult:
         """
@@ -89,8 +73,8 @@ class IngestionService:
             # Ensure ChromaDB directory exists
             self.config.ensure_chroma_dir()
             
-            # Initialize embeddings
-            await self._get_embeddings()
+            # Initialize embeddings to test connection
+            self.embedding_service.get_embeddings()
             
             # Create repository status in state manager
             self.state_manager.create_repository_status(repo_name)
@@ -249,8 +233,8 @@ class IngestionService:
             # Get repository object
             repo = await self.repository_service.get_repository(repo_name)
             
-            # Get embeddings client
-            embeddings = await self._get_embeddings()
+            # Get embeddings client from our EmbeddingService
+            embeddings = self.embedding_service.get_embeddings()
             
             # Fetch data
             logger.info(f"Fetching {description}...")
@@ -269,7 +253,14 @@ class IngestionService:
             collection_name = self.config.get_collection_name(repo_name, collection_type)
             
             if data:
+                # Estimate processing time for user guidance (emergency mode is ~45-60s per chunk)
+                estimated_chunks = len(data)  # Conservative estimate
+                estimated_time_minutes = (estimated_chunks * 50) // 60  # ~50 seconds per chunk average
+                
                 logger.info(f"Found {len(data)} items, embedding and storing...")
+                logger.info(f"⏰ EMERGENCY MODE: Estimated time ~{estimated_time_minutes} minutes ({estimated_chunks} chunks × ~50s each)")
+                logger.info(f"💡 Processing will be very slow but quota-safe. Please be patient...")
+                
                 documents_stored = await chunk_and_embed_and_store(
                     data, embeddings, collection_type, repo_name
                 )
@@ -309,20 +300,30 @@ class IngestionService:
             error_msg = str(e)
             duration = time.time() - start_time
             
+            # Provide specific guidance for quota exhaustion
+            user_friendly_error = error_msg
+            if "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                user_friendly_error = (
+                    f"Gemini API quota exhausted during {step.value} ingestion. "
+                    f"Please wait 15+ minutes for quota reset, then retry this step. "
+                    f"Consider upgrading to Gemini Pro API for higher quotas. "
+                    f"Original error: {error_msg}"
+                )
+            
             self.state_manager.update_repository_step(
                 repo_name, step, IngestionStatus.ERROR,
-                error_message=error_msg,
+                error_message=user_friendly_error,
                 completed_at=datetime.now(),
                 duration_seconds=duration
             )
             
-            logger.error(f"Failed {step.value} ingestion for {repo_name}: {error_msg}")
+            logger.error(f"Failed {step.value} ingestion for {repo_name}: {user_friendly_error}")
             
             return IngestionResult(
                 success=False,
                 repo_name=repo_name,
                 step=step,
-                error_message=error_msg,
+                error_message=user_friendly_error,
                 duration_seconds=duration
             )
     

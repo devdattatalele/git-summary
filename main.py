@@ -34,9 +34,9 @@ Features:
 """
 
 import argparse
-import logging
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Add src to Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -45,20 +45,17 @@ from github_issue_solver import GitHubIssueSolverServer
 
 
 def setup_logging(log_level: str = "INFO") -> None:
-    """Setup logging configuration."""
-    level = getattr(logging, log_level.upper(), logging.INFO)
-    
-    # Configure root logger
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler(sys.stderr)]
+    """Setup Loguru-based logging."""
+    logger.remove()  # Remove default handler
+    logger.add(
+        sys.stderr,
+        level=log_level.upper(),
+        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+               "<level>{level: <8}</level> | "
+               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        colorize=True,
     )
-    
-    # Set specific loggers to appropriate levels
-    logging.getLogger("github").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logger.info(f"Log level set to {log_level.upper()}")
     
 
 def parse_arguments() -> argparse.Namespace:
@@ -174,7 +171,6 @@ def main() -> None:
         print_banner()
         
         # Create and run server
-        logger = logging.getLogger(__name__)
         logger.info("🚀 Initializing GitHub Issue Solver MCP Server v2.0")
         
         # Initialize server with proper error handling
@@ -197,12 +193,10 @@ def main() -> None:
         server.run(transport=args.transport)
         
     except KeyboardInterrupt:
-        logger = logging.getLogger(__name__)
         logger.info("🛑 Server shutdown requested by user")
         logger.info("👋 Thank you for using GitHub Issue Solver MCP Server!")
         
     except Exception as e:
-        logger = logging.getLogger(__name__)
         logger.error(f"❌ Fatal error: {e}")
         logger.error("🔍 Please check the logs above for more details")
         sys.exit(1)

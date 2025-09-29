@@ -6,7 +6,7 @@ with atomic operations and error recovery capabilities.
 """
 
 import json
-import logging
+from loguru import logger
 import asyncio
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
@@ -17,7 +17,6 @@ from ..models import RepositoryStatus, IngestionStatus, IngestionStep, StepResul
 from ..exceptions import StateManagementError
 from ..config import Config
 
-logger = logging.getLogger(__name__)
 
 
 class StateManager:

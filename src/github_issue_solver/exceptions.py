@@ -6,9 +6,8 @@ detailed error information for better debugging and error handling.
 """
 
 from typing import Optional, Dict, Any
-import logging
+from loguru import logger
 
-logger = logging.getLogger(__name__)
 
 
 class GitHubIssueSolverError(Exception):

@@ -6,7 +6,7 @@ with proper error handling and result validation.
 """
 
 import asyncio
-import logging
+from loguru import logger
 import time
 from typing import Dict, Any, List
 from datetime import datetime
@@ -23,7 +23,6 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from issue_solver.patch import generate_patch_for_issue
 
-logger = logging.getLogger(__name__)
 
 
 class PatchService:

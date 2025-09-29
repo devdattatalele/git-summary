@@ -6,7 +6,7 @@ and repository information retrieval with proper error handling.
 """
 
 import asyncio
-import logging
+from loguru import logger
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
@@ -18,7 +18,6 @@ from ..config import Config
 from ..exceptions import RepositoryError
 from ..models import IssueInfo
 
-logger = logging.getLogger(__name__)
 
 
 class RepositoryService:
@@ -159,7 +158,7 @@ class RepositoryService:
                 "ssh_url": repo.ssh_url,
                 "created_at": repo.created_at.isoformat(),
                 "archived": repo.archived,
-                "disabled": repo.disabled,
+                "disabled": getattr(repo, 'disabled', False),
                 "has_issues": repo.has_issues,
                 "has_wiki": repo.has_wiki,
                 "has_pages": repo.has_pages,

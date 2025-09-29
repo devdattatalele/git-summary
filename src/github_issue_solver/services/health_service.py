@@ -6,7 +6,7 @@ to ensure the MCP server operates reliably and can self-diagnose issues.
 """
 
 import asyncio
-import logging
+from loguru import logger
 import time
 import psutil
 import threading
@@ -20,7 +20,6 @@ from ..services.state_manager import StateManager
 from ..services.repository_service import RepositoryService
 from ..exceptions import GitHubIssueSolverError
 
-logger = logging.getLogger(__name__)
 
 
 class HealthService:
@@ -53,7 +52,7 @@ class HealthService:
             "uptime_start": datetime.now()
         }
         
-    async def start_monitoring(self) -> None:
+    def start_monitoring(self) -> None:
         """Start background health monitoring."""
         if not self._monitoring_active:
             self._monitoring_active = True
@@ -350,7 +349,7 @@ class HealthService:
                 "checks": {
                     "state_readable": True,  # We got here so it's readable
                     "state_writable": state_writable,
-                    "repositories_tracked": repo_count > 0
+                    "state_repositories_ok": True  # Having 0 repos is a valid state
                 },
                 "details": {
                     "repositories_count": repo_count,

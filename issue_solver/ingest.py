@@ -29,6 +29,13 @@ import google.generativeai as genai
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from tqdm import tqdm
 
+# Define local IngestionError to avoid circular imports
+class IngestionError(Exception):
+    """Exception raised when ingestion fails."""
+    def __init__(self, message: str, cause: Exception = None):
+        super().__init__(message)
+        self.cause = cause
+
 # --- CONFIGURATION ---
 # Load environment variables from .env file
 load_dotenv()
@@ -768,15 +775,37 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
     # Issues/PRs: Moderate chunks but aggressive limits
     issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=250)
     
-    # PERFORMANCE OPTIMIZATIONS
-    batch_size = 100  # Larger batches for efficiency
-    embedding_batch_size = 100  # Much larger embedding batches
+    # Detect embedding type and optimize accordingly
+    is_fastembed = "FastEmbed" in str(type(embeddings)) or "fastembed" in str(type(embeddings)).lower()
+    
+    if is_fastembed:
+        # FASTEMBED MODE - Fast offline processing, no delays needed
+        batch_size = 50  # Much larger batches for fast processing
+        embedding_batch_size = 20  # Process multiple chunks at once
+        logger.info(f"🚀 FASTEMBED MODE: Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
+        logger.info(f"⚡ OPTIMIZED Configuration for Offline FastEmbed:")
+        logger.info(f"  • Document batch size: {batch_size} (fast mode)")
+        logger.info(f"  • Embedding batch size: {embedding_batch_size} (parallel processing)")
+        logger.info(f"  • No delays: Offline processing")
+        logger.info(f"⏰ EXPECTED TIME: ~1-2 seconds per batch (very fast)")
+    else:
+        # GEMINI API RATE LIMIT OPTIMIZATIONS - EMERGENCY MODE for extremely limited quotas
+        batch_size = 10  # Ultra-conservative batch size for document processing
+        embedding_batch_size = 1  # CRITICAL: Single chunk per request to minimize API calls
+        logger.info(f"🚀 GEMINI EMERGENCY MODE: Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
+        logger.info(f"🐌 ULTRA-CONSERVATIVE Configuration for Severely Limited Quotas:")
+        logger.info(f"  • Document batch size: {batch_size} (emergency mode)")
+        logger.info(f"  • Embedding batch size: {embedding_batch_size} (single chunk per request)")
+        logger.info(f"  • Pre-request delay: 15-35s (escalating)")
+        logger.info(f"  • Post-success delay: 30s (quota recovery)")
+        logger.info(f"  • Retry base delay: 60s (quota exhaustion recovery)")
+        logger.info(f"  • Max retries: 5")
+        logger.info(f"⏰ EXPECTED TIME: ~45-60 seconds per chunk (very slow but quota-safe)")
+        logger.info(f"💡 If rate limits persist, wait 15+ minutes for Gemini quota reset")
+    
     total_documents_stored = 0
     total_chunks_created = 0
     start_time = time.time()
-    
-    logger.info(f"🚀 OPTIMIZED Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
-    logger.info(f"📊 Target: Minimize chunks while preserving quality for {collection_name}")
     
     # Create/get the Chroma collection with repository-specific naming
     chroma_collection = create_chroma_collection(embeddings, collection_name, repo_name)
@@ -915,31 +944,76 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
             for chunk, metadata in zip(all_chunks, all_metadatas)
         ]
         
-        # 3. OPTIMIZED EMBEDDING AND STORAGE
-        # Use much larger batches for embedding efficiency
-        for start in range(0, len(langchain_docs), embedding_batch_size):
-            end = start + embedding_batch_size
-            sub_batch = langchain_docs[start:end]
-            embed_start_time = time.time()
-            
+        # 3. OPTIMIZED EMBEDDING BASED ON PROVIDER TYPE
+        if is_fastembed:
+            # FASTEMBED MODE: Fast batch processing without delays
             try:
-                # Single large embedding call for efficiency
-                await asyncio.to_thread(chroma_collection.add_documents, sub_batch)
-                total_documents_stored += len(sub_batch)
+                embed_start_time = time.time()
+                await asyncio.to_thread(chroma_collection.add_documents, langchain_docs)
+                total_documents_stored += len(langchain_docs)
                 embed_time = time.time() - embed_start_time
-                
-                # Concise progress logging
-                logger.info(f"✅ Embedded {len(sub_batch)} chunks (⏱️ {embed_time:.1f}s) | Total: {total_documents_stored}")
-                
-                # Intelligent yielding based on time
-                if embed_time > 1.0:
-                    await asyncio.sleep(0.05)  # Longer yield for slow operations
-                else:
-                    await asyncio.sleep(0.01)  # Quick yield for fast operations
+                logger.info(f"⚡ FASTEMBED SUCCESS: Embedded {len(langchain_docs)} chunks in {embed_time:.1f}s. Progress: {total_documents_stored} chunks")
                 
             except Exception as e:
-                logger.error(f"❌ Embedding error: {e}")
-                continue
+                logger.error(f"❌ FastEmbed processing failed: {e}")
+                raise IngestionError(f"FastEmbed processing failed: {str(e)}", cause=e)
+        else:
+            # GEMINI MODE: Ultra-conservative processing with delays
+            embedding_batch_size = 1  # CRITICAL: One chunk at a time to minimize quota usage
+            for start in range(0, len(langchain_docs), embedding_batch_size):
+                end = start + embedding_batch_size
+                sub_batch = langchain_docs[start:end]
+                
+                max_retries = 5  # More retries for quota recovery
+                base_delay = 60.0  # Start with 60-second delays for quota recovery
+
+                for attempt in range(max_retries):
+                    try:
+                        progress_msg = f"[{start//embedding_batch_size + 1}/{len(langchain_docs)//embedding_batch_size + 1}]"
+                        logger.info(f"🐌 ULTRA-CONSERVATIVE: Embedding single chunk {progress_msg} (Attempt {attempt + 1}/{max_retries})...")
+                        
+                        # EXTENDED PRE-EMPTIVE DELAY: Wait longer before requests
+                        pre_delay = 15.0 + (attempt * 5.0)  # 15s, 20s, 25s, 30s, 35s
+                        logger.info(f"😴 Waiting {pre_delay:.0f}s before API request to respect quota...")
+                        await asyncio.sleep(pre_delay)
+
+                        embed_start_time = time.time()
+                        await asyncio.to_thread(chroma_collection.add_documents, sub_batch)
+                        total_documents_stored += len(sub_batch)
+                        embed_time = time.time() - embed_start_time
+
+                        logger.info(f"✅ SUCCESS: Embedded 1 chunk in {embed_time:.1f}s. Progress: {total_documents_stored}/{len(langchain_docs)} chunks")
+                        
+                        # EXTENDED POST-SUCCESS DELAY: Give quota time to recover
+                        post_delay = 30.0  # Wait 30 seconds after success
+                        logger.info(f"😴 Post-success cooldown: {post_delay:.0f}s to let quota recover...")
+                        await asyncio.sleep(post_delay)
+
+                        break  # Success, exit the retry loop
+
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        is_rate_limit = "429" in error_str or "quota" in error_str or "rate limit" in error_str or "resource_exhausted" in error_str
+
+                        if is_rate_limit:
+                            if attempt < max_retries - 1:
+                                delay = base_delay * (1.5 ** attempt)  # 60s, 90s, 135s, 202s
+                                logger.warning(f"⚠️ Gemini quota exhausted. Waiting {delay:.0f}s for recovery... (Attempt {attempt + 1}/{max_retries})")
+                                logger.warning(f"💡 Consider waiting 15+ minutes for quota reset if this persists")
+                                await asyncio.sleep(delay)
+                            else:
+                                logger.error(f"❌ QUOTA EXHAUSTED: Failed after {max_retries} attempts over {sum([60 * (1.5 ** i) for i in range(max_retries)]):.0f}+ seconds")
+                                logger.error(f"💡 SOLUTION: Wait 15+ minutes for Gemini quota reset, then retry ingestion")
+                                logger.error(f"💡 OR: Upgrade to Gemini Pro API for higher quotas")
+                                raise IngestionError(
+                                    f"Gemini API quota completely exhausted. Wait 15+ minutes for quota reset, then retry. "
+                                    f"Progress: {total_documents_stored}/{len(langchain_docs)} chunks completed.",
+                                    cause=e
+                                )
+                        else:
+                            # It's a different, unexpected error
+                            logger.error(f"❌ Unexpected embedding error: {e}")
+                            raise IngestionError("An unexpected error occurred during embedding.", cause=e)
         
         # Progress checkpoint every batch
         total_time = time.time() - start_time
@@ -952,10 +1026,12 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
     total_time = time.time() - start_time
     efficiency_ratio = len(documents) / total_documents_stored if total_documents_stored > 0 else 0
     
-    logger.info(f"🎉 COMPLETED {collection_name}:")
+    logger.info(f"🎉 COMPLETED {collection_name} (Emergency ultra-conservative mode):")
     logger.info(f"  📄 {len(documents)} documents → 📦 {total_documents_stored} chunks")
     logger.info(f"  📊 Efficiency ratio: {efficiency_ratio:.2f} docs/chunk (higher = better)")
-    logger.info(f"  ⏱️  Total time: {total_time:.1f} seconds")
+    logger.info(f"  ⏱️  Total time: {total_time:.1f} seconds (~{total_time/60:.1f} minutes)")
+    logger.info(f"  🐌 Emergency mode: Used 1-chunk-per-request with extended delays")
+    logger.info(f"  🎯 Quota preservation: Maximum API quota conservation achieved")
     
     return total_documents_stored
 

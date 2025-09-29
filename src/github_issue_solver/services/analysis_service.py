@@ -6,7 +6,7 @@ with repository knowledge base for comprehensive issue understanding.
 """
 
 import asyncio
-import logging
+from loguru import logger
 import time
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -31,7 +31,6 @@ from issue_solver.analyze import (
     append_to_google_doc
 )
 
-logger = logging.getLogger(__name__)
 
 
 class AnalysisService:

@@ -302,7 +302,7 @@ def create_claude_config():
         "mcpServers": {
             "github-issue-resolver": {
                 "command": python_path,
-                "args": [str(current_dir / "github_issue_mcp_server.py")],
+                "args": [str(current_dir / "main.py")],
                 "env": {
                     "PYTHONPATH": str(current_dir),
                     "CHROMA_PERSIST_DIR": str(current_dir / "chroma_db")
@@ -389,7 +389,7 @@ def print_usage_instructions():
     
     print("\n📋 USAGE INSTRUCTIONS:")
     print("\n1. 🚀 Start the MCP server:")
-    print("   python github_issue_mcp_server.py")
+    print("   python main.py")
     
     print("\n2. 🔧 Configure Claude Desktop:")
     print("   • Restart Claude Desktop")

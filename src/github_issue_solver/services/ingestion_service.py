@@ -243,8 +243,8 @@ class IngestionService:
                 # Issues require different parameter passing
                 data = await asyncio.to_thread(fetch_function, repo)
             elif step == IngestionStep.PRS:
-                # PRs require different parameter passing  
-                data = await asyncio.to_thread(fetch_function, repo)
+                # PRs require async fetching with timeout prevention
+                data = await self._fetch_prs_with_timeout_prevention(repo, fetch_function)
             else:
                 # Docs and code use repo.full_name
                 data = await fetch_function(repo.full_name)
@@ -253,13 +253,23 @@ class IngestionService:
             collection_name = self.config.get_collection_name(repo_name, collection_type)
             
             if data:
-                # Estimate processing time for user guidance (emergency mode is ~45-60s per chunk)
-                estimated_chunks = len(data)  # Conservative estimate
-                estimated_time_minutes = (estimated_chunks * 50) // 60  # ~50 seconds per chunk average
+                # Detect embedding provider for accurate time estimates
+                is_fastembed = "FastEmbed" in str(type(embeddings)) or "fastembed" in str(type(embeddings)).lower()
                 
-                logger.info(f"Found {len(data)} items, embedding and storing...")
-                logger.info(f"⏰ EMERGENCY MODE: Estimated time ~{estimated_time_minutes} minutes ({estimated_chunks} chunks × ~50s each)")
-                logger.info(f"💡 Processing will be very slow but quota-safe. Please be patient...")
+                if is_fastembed:
+                    # FastEmbed: Much faster, ~2-5 seconds per batch of 50 docs
+                    estimated_batches = (len(data) + 49) // 50
+                    estimated_time_seconds = estimated_batches * 4  # ~4s per batch
+                    logger.info(f"Found {len(data)} items, embedding with FastEmbed (offline)...")
+                    logger.info(f"⚡ FASTEMBED MODE: Estimated time ~{estimated_time_seconds}s ({estimated_batches} batches × ~4s each)")
+                    logger.info(f"💡 Offline processing - no API quotas needed!")
+                else:
+                    # Gemini API: Slow due to rate limits
+                    estimated_chunks = len(data)
+                    estimated_time_minutes = (estimated_chunks * 50) // 60
+                    logger.info(f"Found {len(data)} items, embedding with Gemini API...")
+                    logger.info(f"⏰ GEMINI MODE: Estimated time ~{estimated_time_minutes} minutes ({estimated_chunks} chunks × ~50s each)")
+                    logger.info(f"💡 Processing will be slow due to API quotas. Please be patient...")
                 
                 documents_stored = await chunk_and_embed_and_store(
                     data, embeddings, collection_type, repo_name
@@ -326,6 +336,69 @@ class IngestionService:
                 error_message=user_friendly_error,
                 duration_seconds=duration
             )
+    
+    async def _fetch_prs_with_timeout_prevention(self, repo, fetch_function):
+        """
+        Fetch PRs with periodic yielding to prevent MCP timeout.
+        
+        This wrapper runs PR fetching in a separate thread but periodically
+        checks if we should yield control to keep the MCP connection alive.
+        """
+        import threading
+        import queue
+        
+        # Create a queue for communication between threads
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+        
+        # Flag to track completion
+        completed = False
+        
+        def fetch_in_thread():
+            """Run the synchronous fetch_function in a background thread."""
+            try:
+                result = fetch_function(repo)
+                result_queue.put(result)
+            except Exception as e:
+                exception_queue.put(e)
+        
+        # Start fetching in background thread
+        thread = threading.Thread(target=fetch_in_thread, daemon=True)
+        thread.start()
+        logger.info("🔄 PR fetching started in background thread with periodic yielding...")
+        
+        # Periodically yield control while waiting for completion
+        yield_interval = 5.0  # Yield every 5 seconds
+        total_wait = 0
+        max_wait = 240.0  # 4 minutes max (just under MCP timeout)
+        
+        while thread.is_alive() and total_wait < max_wait:
+            await asyncio.sleep(yield_interval)
+            total_wait += yield_interval
+            logger.debug(f"⏱️ PR fetching in progress... ({total_wait:.0f}s elapsed)")
+        
+        # Check if thread finished
+        if thread.is_alive():
+            logger.error(f"❌ PR fetching exceeded {max_wait}s limit - stopping to prevent MCP timeout")
+            # Note: We can't forcefully stop the thread, but we can return what we have
+            # The thread will continue but we won't wait for it
+            raise IngestionError(
+                f"PR fetching exceeded time limit ({max_wait}s). "
+                f"This repository has too many PRs. Try reducing MAX_PRS or use a different approach.",
+                step="prs"
+            )
+        
+        # Check for exceptions
+        if not exception_queue.empty():
+            raise exception_queue.get()
+        
+        # Get result
+        if not result_queue.empty():
+            result = result_queue.get()
+            logger.info(f"✅ PR fetching completed successfully in {total_wait:.1f}s")
+            return result
+        else:
+            raise IngestionError("PR fetching completed but no result was returned", step="prs")
     
     async def get_ingestion_progress(self, repo_name: str) -> Dict[str, Any]:
         """

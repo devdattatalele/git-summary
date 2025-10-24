@@ -41,7 +41,7 @@ class Config:
             "GOOGLE_DOCS_ID": None,
             "CHROMA_PERSIST_DIR": None,
             "MAX_ISSUES": "100",
-            "MAX_PRS": "50", 
+            "MAX_PRS": "15",  # Reduced to 15 to prevent timeout on repos with many PRs (was 25, originally 50) 
             "MAX_FILES": "50",
             "ENABLE_PATCH_GENERATION": "true",
             "MAX_COMPLEXITY_FOR_AUTO_PR": "4",
@@ -98,7 +98,7 @@ class Config:
         
         # Numeric configuration
         self.max_issues = int(os.getenv("MAX_ISSUES", "100"))
-        self.max_prs = int(os.getenv("MAX_PRS", "50"))
+        self.max_prs = int(os.getenv("MAX_PRS", "15"))  # Default 15 to prevent timeouts on repos with many PRs
         self.max_files = int(os.getenv("MAX_FILES", "50"))
         self.max_complexity_for_auto_pr = int(os.getenv("MAX_COMPLEXITY_FOR_AUTO_PR", "4"))
         self.health_check_interval = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))

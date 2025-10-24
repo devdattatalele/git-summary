@@ -536,20 +536,36 @@ async def fetch_repo_docs(repo_full_name: str):
     return docs
 
 def fetch_repo_pr_history(repo, max_prs=50):
-    """Optimized PR history fetching with smart content filtering and diff size limits."""
-    logger.info(f"🚀 OPTIMIZED PR history fetching (max: {max_prs})...")
+    """Optimized PR history fetching with hard limit and timeout prevention."""
+    logger.info(f"🚀 FAST PR history fetching (max: {max_prs} merged PRs)...")
     pr_data = []
-    count = 0
+    count = 0  # Count of merged PRs collected
+    examined = 0  # Total PRs examined
+    
+    # CRITICAL: Hard limit on total PRs to examine to prevent timeout
+    # For repos with many PRs, we may not get max_prs merged PRs, but we won't timeout
+    max_to_examine = min(max_prs * 10, 200)  # Examine at most 200 PRs OR 10x target
     
     try:
-        # Get merged PRs (limit to recent ones to avoid rate limits)
-        prs = repo.get_pulls(state="closed", sort="updated", direction="desc")
+        # Use state="all" like issues do to get both open and closed PRs
+        prs = repo.get_pulls(state="all", sort="updated", direction="desc")
+        logger.info(f"📥 Fetching up to {max_prs} merged PRs (will examine max {max_to_examine} total PRs)...")
         
+        # Loop with HARD LIMIT to prevent timeout
         for pr in tqdm(prs, desc="Fetching PR history efficiently", total=max_prs):
-            if count >= max_prs:  # Apply user-specified limit
-                logger.info(f"✅ Reached maximum PR limit ({max_prs}), stopping...")
+            examined += 1
+            
+            # CRITICAL: Stop if we have enough merged PRs OR examined too many
+            if count >= max_prs:
+                logger.info(f"✅ Collected {max_prs} merged PRs (examined {examined} total), stopping...")
                 break
-                
+            
+            if examined > max_to_examine:
+                logger.warning(f"⚠️ Examined {examined} PRs, collected {count} merged PRs. Stopping to prevent timeout.")
+                logger.warning(f"💡 If you need more PRs, the repo has many open/closed PRs. Consider using a different date range.")
+                break
+            
+            # Only process merged PRs (skip open and closed-but-not-merged)
             if pr.merged:
                 try:
                     # OPTIMIZATION: Limit file processing to avoid huge PRs
@@ -605,9 +621,9 @@ def fetch_repo_pr_history(repo, max_prs=50):
                     })
                     count += 1
                     
-                    # Progress feedback every 10 PRs
+                    # Progress feedback every 10 merged PRs (like issues do every 25)
                     if count % 10 == 0:
-                        logger.info(f"📊 Processed {count}/{max_prs} PRs...")
+                        logger.info(f"📊 Collected {count}/{max_prs} merged PRs...")
                     
                 except Exception as e:
                     logger.warning(f"⚠️ Error fetching PR #{pr.number}: {e}")
@@ -765,29 +781,35 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
     """Optimized chunking and embedding with performance improvements and timeout prevention."""
     import time
     
-    # OPTIMIZED CHUNKING STRATEGIES - Much larger chunks to reduce total count
-    # Documentation: Large chunks for better context, minimal splitting
-    doc_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+    # OPTIMIZED CHUNKING STRATEGIES - Adjust based on embedding provider
+    # Detect embedding type
+    is_fastembed = "FastEmbed" in str(type(embeddings)) or "fastembed" in str(type(embeddings)).lower()
     
-    # Code: Even larger chunks to preserve function/class integrity
-    code_splitter = RecursiveCharacterTextSplitter(chunk_size=6000, chunk_overlap=300)
-    
-    # Issues/PRs: Moderate chunks but aggressive limits
-    issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=250)
+    if is_fastembed:
+        # FASTEMBED: Can handle MUCH larger chunks efficiently (faster processing)
+        # Larger chunks = fewer total chunks = faster embedding = no timeout
+        doc_splitter = RecursiveCharacterTextSplitter(chunk_size=8000, chunk_overlap=400)
+        code_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=500)
+        issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=8000, chunk_overlap=400)
+    else:
+        # GEMINI: Smaller chunks due to API limits and cost
+        doc_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+        code_splitter = RecursiveCharacterTextSplitter(chunk_size=6000, chunk_overlap=300)
+        issue_pr_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=250)
     
     # Detect embedding type and optimize accordingly
     is_fastembed = "FastEmbed" in str(type(embeddings)) or "fastembed" in str(type(embeddings)).lower()
     
     if is_fastembed:
-        # FASTEMBED MODE - Fast offline processing, no delays needed
-        batch_size = 50  # Much larger batches for fast processing
-        embedding_batch_size = 20  # Process multiple chunks at once
+        # FASTEMBED MODE - Fast offline processing, MAXIMIZE batch size to prevent timeouts
+        batch_size = 100  # DOUBLED: Larger batches = fewer embedding calls = faster
+        embedding_batch_size = 100  # MAXIMIZED: Process all chunks in one shot per batch
         logger.info(f"🚀 FASTEMBED MODE: Processing {len(documents)} documents for collection '{collection_name}' (repo: {repo_name})...")
         logger.info(f"⚡ OPTIMIZED Configuration for Offline FastEmbed:")
-        logger.info(f"  • Document batch size: {batch_size} (fast mode)")
-        logger.info(f"  • Embedding batch size: {embedding_batch_size} (parallel processing)")
+        logger.info(f"  • Document batch size: {batch_size} (MAXIMIZED for speed)")
+        logger.info(f"  • Embedding batch size: {embedding_batch_size} (ALL chunks per batch)")
         logger.info(f"  • No delays: Offline processing")
-        logger.info(f"⏰ EXPECTED TIME: ~1-2 seconds per batch (very fast)")
+        logger.info(f"⏰ EXPECTED TIME: ~3-8 seconds per batch (fast, no timeout risk)")
     else:
         # GEMINI API RATE LIMIT OPTIMIZATIONS - EMERGENCY MODE for extremely limited quotas
         batch_size = 10  # Ultra-conservative batch size for document processing
@@ -828,53 +850,71 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
             # CONTENT-AWARE CHUNKING STRATEGY
             if doc_type == "doc":
                 # DOCUMENTATION - Highest priority, preserve context
-                if content_length <= 3000:
-                    # Small docs: keep whole for perfect context
-                    chunks = [content]
-                elif content_length <= 8000:
-                    # Medium docs: minimal chunking
-                    chunks = doc_splitter.split_text(content)
-                    if len(chunks) > 3:
-                        # Merge small chunks to reduce total count
-                        merged_chunks = []
-                        current_chunk = ""
-                        for chunk in chunks:
-                            if len(current_chunk + chunk) <= 5000:
-                                current_chunk += "\n\n" + chunk if current_chunk else chunk
-                            else:
-                                if current_chunk:
-                                    merged_chunks.append(current_chunk)
-                                current_chunk = chunk
-                        if current_chunk:
-                            merged_chunks.append(current_chunk)
-                        chunks = merged_chunks[:3]  # Max 3 chunks for docs
+                if is_fastembed:
+                    # FASTEMBED: Use much larger thresholds
+                    if content_length <= 7000:
+                        chunks = [content]  # Keep whole up to 7KB
+                    elif content_length <= 15000:
+                        chunks = doc_splitter.split_text(content)[:2]  # Max 2 chunks
+                    else:
+                        chunks = doc_splitter.split_text(content)[:3]  # Max 3 chunks
                 else:
-                    # Large docs: controlled chunking
-                    chunks = doc_splitter.split_text(content)[:4]  # Max 4 chunks for large docs
+                    # GEMINI: Original conservative logic
+                    if content_length <= 3000:
+                        chunks = [content]
+                    elif content_length <= 8000:
+                        chunks = doc_splitter.split_text(content)
+                        if len(chunks) > 3:
+                            merged_chunks = []
+                            current_chunk = ""
+                            for chunk in chunks:
+                                if len(current_chunk + chunk) <= 5000:
+                                    current_chunk += "\n\n" + chunk if current_chunk else chunk
+                                else:
+                                    if current_chunk:
+                                        merged_chunks.append(current_chunk)
+                                    current_chunk = chunk
+                            if current_chunk:
+                                merged_chunks.append(current_chunk)
+                            chunks = merged_chunks[:3]
+                    else:
+                        chunks = doc_splitter.split_text(content)[:4]
                     
             elif doc_type == "code":
                 # CODE - Second highest priority, preserve function boundaries
-                if content_length <= 4000:
-                    # Small code: keep whole to preserve structure
-                    chunks = [content]
-                elif content_length <= 10000:
-                    # Medium code: careful chunking
-                    chunks = code_splitter.split_text(content)
-                    if len(chunks) > 2:
-                        chunks = chunks[:2]  # Max 2 chunks for code files
+                if is_fastembed:
+                    # FASTEMBED: Much more aggressive - keep files whole when possible
+                    if content_length <= 9000:
+                        chunks = [content]  # Keep whole up to 9KB
+                    elif content_length <= 18000:
+                        chunks = code_splitter.split_text(content)[:2]  # Max 2 chunks
+                    else:
+                        chunks = code_splitter.split_text(content)[:2]  # Still max 2 chunks
                 else:
-                    # Large code: strategic chunking
-                    chunks = code_splitter.split_text(content)[:3]  # Max 3 chunks for large code
+                    # GEMINI: Original logic
+                    if content_length <= 4000:
+                        chunks = [content]
+                    elif content_length <= 10000:
+                        chunks = code_splitter.split_text(content)
+                        if len(chunks) > 2:
+                            chunks = chunks[:2]
+                    else:
+                        chunks = code_splitter.split_text(content)[:3]
                     
             elif doc_type in ["issue", "pr"]:
                 # ISSUES/PRs - Can be more aggressive to save processing time
-                if content_length <= 6000:
-                    # Small/medium: keep whole
-                    chunks = [content]
+                if is_fastembed:
+                    # FASTEMBED: Very aggressive - minimize chunks
+                    if content_length <= 7000:
+                        chunks = [content]  # Keep whole up to 7KB
+                    else:
+                        chunks = issue_pr_splitter.split_text(content)[:1]  # Max 1 chunk!
                 else:
-                    # Large: aggressive chunking with strict limits
-                    chunks = issue_pr_splitter.split_text(content)
-                    chunks = chunks[:2]  # Max 2 chunks for issues/PRs
+                    # GEMINI: Original logic
+                    if content_length <= 6000:
+                        chunks = [content]
+                    else:
+                        chunks = issue_pr_splitter.split_text(content)[:2]
             else:
                 # Fallback: Conservative chunking
                 if content_length <= 4000:
@@ -946,13 +986,29 @@ async def chunk_and_embed_and_store(documents, embeddings, collection_name: str,
         
         # 3. OPTIMIZED EMBEDDING BASED ON PROVIDER TYPE
         if is_fastembed:
-            # FASTEMBED MODE: Fast batch processing without delays
+            # FASTEMBED MODE: Fast batch processing with progress yielding
             try:
                 embed_start_time = time.time()
-                await asyncio.to_thread(chroma_collection.add_documents, langchain_docs)
-                total_documents_stored += len(langchain_docs)
+                
+                # Process in smaller sub-batches to yield control and prevent timeout
+                sub_batch_size = 50  # Process 50 chunks at a time
+                for sub_start in range(0, len(langchain_docs), sub_batch_size):
+                    sub_end = min(sub_start + sub_batch_size, len(langchain_docs))
+                    sub_batch = langchain_docs[sub_start:sub_end]
+                    
+                    sub_embed_start = time.time()
+                    await asyncio.to_thread(chroma_collection.add_documents, sub_batch)
+                    total_documents_stored += len(sub_batch)
+                    sub_embed_time = time.time() - sub_embed_start
+                    
+                    # Log progress for each sub-batch
+                    logger.info(f"⚡ FASTEMBED: Embedded {len(sub_batch)} chunks in {sub_embed_time:.1f}s. Progress: {total_documents_stored}/{len(documents)} total")
+                    
+                    # CRITICAL: Yield control every sub-batch to prevent MCP timeout
+                    await asyncio.sleep(0.1)  # 100ms yield - keeps MCP connection alive
+                
                 embed_time = time.time() - embed_start_time
-                logger.info(f"⚡ FASTEMBED SUCCESS: Embedded {len(langchain_docs)} chunks in {embed_time:.1f}s. Progress: {total_documents_stored} chunks")
+                logger.info(f"✅ BATCH COMPLETE: {len(langchain_docs)} chunks embedded in {embed_time:.1f}s")
                 
             except Exception as e:
                 logger.error(f"❌ FastEmbed processing failed: {e}")

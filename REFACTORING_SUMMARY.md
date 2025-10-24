@@ -165,3 +165,4 @@ The model (approximately 133MB) will be downloaded and cached locally. Subsequen
 **Refactoring Status: ✅ COMPLETE**
 
 The GitHub Issue Solver MCP Server is now more robust, flexible, and user-friendly with offline embedding support and enhanced logging capabilities.
+

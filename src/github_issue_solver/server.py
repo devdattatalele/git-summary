@@ -169,8 +169,8 @@ class GitHubIssueSolverServer:
                                                     lambda r: ingestion_service.ingest_issues(r, max_issues))
         
         @self.mcp.tool()
-        async def ingest_repository_prs(repo_name: str, max_prs: int = 50) -> str:
-            """Ingest PR history (Step 4 of 4)."""
+        async def ingest_repository_prs(repo_name: str, max_prs: int = 15) -> str:
+            """Ingest PR history (Step 4 of 4). Default is 15 PRs to prevent timeouts on repos with many PRs."""
             return await self._execute_ingestion_step("prs", repo_name, 
                                                     lambda r: ingestion_service.ingest_prs(r, max_prs), 
                                                     is_final_step=True)

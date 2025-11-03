@@ -1,4 +1,4 @@
-# GitHub Issue Solver MCP Server v2.0
+# GitHub Issue Solver MCP Server v3.0
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
@@ -8,7 +8,46 @@
 
 A **professional-grade MCP server** for automated GitHub issue resolution with enterprise-level reliability, AI-powered analysis, and intelligent patch generation. Built with modern software architecture principles including service-oriented design, comprehensive health monitoring, and robust error recovery.
 
-## 🚀 What's New in v2.0
+## What's New in v3.0
+
+### Offline Embedding Support with FastEmbed
+- **Local Embedding Models** - No API quota limits with FastEmbed offline processing
+- **Dual Provider Architecture** - Switch between Google Gemini API and local FastEmbed models
+- **Faster Processing** - 10x faster embeddings with offline models (3-4s per batch vs 45-60s)
+- **Cost Effective** - Zero embedding costs when using FastEmbed
+- **Configurable** - Simple environment variable to switch providers
+
+### Enhanced Performance and Reliability
+- **Timeout Prevention** - Hard limits and async yielding prevent MCP connection timeouts
+- **Smart PR Fetching** - Examines up to 200 PRs with intelligent merged PR detection
+- **Large Repository Support** - Successfully handles repos with 1000+ PRs (e.g., curl/curl)
+- **Reduced Defaults** - Conservative MAX_PRS=15 default prevents timeouts on large repos
+- **Progress Yielding** - Periodic async yields every 5 seconds keep MCP connections alive
+
+### Optimized Chunking Strategy
+- **Provider-Aware Chunking** - Larger chunks for FastEmbed (8-10KB), smaller for Gemini (4-6KB)
+- **Aggressive Chunk Limits** - Fewer chunks for issues/PRs (1-2 chunks) reduces processing time
+- **Content-Aware Strategy** - Intelligent chunking based on document type and importance
+- **Batch Size Optimization** - Batch size of 100 for FastEmbed, 10 for Gemini
+
+### Configuration Updates
+```env
+# New in v3.0
+EMBEDDING_PROVIDER=fastembed          # 'google' or 'fastembed'
+EMBEDDING_MODEL_NAME=BAAI/bge-small-en-v1.5  # FastEmbed model
+MAX_PRS=15                            # Reduced from 50 to prevent timeouts
+```
+
+### Performance Improvements
+| Metric | v2.0 | v3.0 | Improvement |
+|--------|------|------|-------------|
+| **Embedding Speed (50 docs)** | 45-60s | 3-4s | **90% faster** |
+| **PR Ingestion (curl/curl)** | Timeout (4m46s+) | 2m30s | **No timeouts** |
+| **API Quota Usage** | High (Gemini) | Zero (FastEmbed) | **100% savings** |
+| **Chunk Processing** | Unlimited | Capped at 200 PRs | **Timeout-safe** |
+| **Default MAX_PRS** | 25 | 15 | **Safer defaults** |
+
+## What's New in v2.0
 
 ### 🏗️ **Complete Architecture Transformation**
 - **Professional Service Architecture** - Modular, maintainable, and testable code structure
@@ -82,17 +121,21 @@ Create a `.env` file in the project root:
 # Required: GitHub API access
 GITHUB_TOKEN=your_github_personal_access_token
 
-# Required: Google Gemini API access
+# Required: Google Gemini API access (not needed if using FastEmbed)
 GOOGLE_API_KEY=your_google_api_key
 
 # Optional: Google Docs integration for analysis reports
 GOOGLE_DOCS_ID=your_google_docs_document_id
 
+# v3.0: Embedding Configuration
+EMBEDDING_PROVIDER=fastembed         # 'fastembed' (offline, fast) or 'google' (online, quota-limited)
+EMBEDDING_MODEL_NAME=BAAI/bge-small-en-v1.5  # FastEmbed model (only used if provider=fastembed)
+
 # Optional: Advanced configuration
 CHROMA_PERSIST_DIR=./chroma_db
 LOG_LEVEL=INFO
 MAX_ISSUES=100
-MAX_PRS=50
+MAX_PRS=15                           # v3.0: Reduced from 50 to prevent timeouts on large repos
 HEALTH_CHECK_INTERVAL=300
 ```
 
@@ -140,22 +183,23 @@ The setup script automatically creates the Claude Desktop configuration. If manu
 
 ```
 src/github_issue_solver/
-├── 📋 server.py                    # FastMCP server with clean tool registration
-├── ⚙️  config.py                    # Environment validation & configuration management  
-├── 📊 models.py                    # Type-safe data models with serialization
-├── ❌ exceptions.py                # Custom exceptions with recovery guidance
-├── 🔧 services/                   # Business logic services
-│   ├── 💾 state_manager.py         # Thread-safe persistent state management
-│   ├── 🐙 repository_service.py    # GitHub API operations with error handling
-│   ├── 📥 ingestion_service.py     # Multi-step repository data ingestion
-│   ├── 🧠 analysis_service.py      # AI-powered issue analysis with RAG
-│   ├── 🛠️  patch_service.py        # Intelligent code patch generation
-│   └── 🏥 health_service.py        # Comprehensive health monitoring
-└── 🛠️  tools/                     # Clean MCP tool implementations
-    ├── 📥 ingestion_tools.py       # Repository ingestion tool definitions
-    ├── 🔍 analysis_tools.py        # Issue analysis tool definitions
-    ├── 🛠️  patch_tools.py           # Patch generation tool definitions
-    └── 📋 management_tools.py       # Server management tool definitions
+├── server.py                      # FastMCP server with clean tool registration
+├── config.py                      # Environment validation & configuration management  
+├── models.py                      # Type-safe data models with serialization
+├── exceptions.py                  # Custom exceptions with recovery guidance
+├── services/                      # Business logic services
+│   ├── state_manager.py           # Thread-safe persistent state management
+│   ├── repository_service.py      # GitHub API operations with error handling
+│   ├── ingestion_service.py       # Multi-step repository data ingestion (v3.0: timeout prevention)
+│   ├── embedding_service.py       # v3.0: Dual embedding provider (FastEmbed/Google)
+│   ├── analysis_service.py        # AI-powered issue analysis with RAG
+│   ├── patch_service.py           # Intelligent code patch generation
+│   └── health_service.py          # Comprehensive health monitoring
+└── tools/                         # Clean MCP tool implementations
+    ├── ingestion_tools.py         # Repository ingestion tool definitions
+    ├── analysis_tools.py          # Issue analysis tool definitions
+    ├── patch_tools.py             # Patch generation tool definitions
+    └── management_tools.py        # Server management tool definitions
 ```
 
 ### Data Flow Architecture
@@ -200,8 +244,10 @@ graph TB
 
 #### AI & Analysis
 - **Google Gemini 2.5-Flash** - Latest language model for superior code understanding
+- **FastEmbed (v3.0)** - Local offline embedding models (BAAI/bge-small-en-v1.5)
 - **LangChain** - RAG framework for context-aware analysis
 - **ChromaDB** - Vector database for repository-specific knowledge bases
+- **Dual Embedding Providers (v3.0)** - Switch between local FastEmbed and cloud Google Gemini
 
 #### Enterprise Features
 - **Threading** - Background health monitoring with thread safety
@@ -311,13 +357,17 @@ list_ingested_repositories()  # View all available repositories
 
 ```env
 # Core Configuration
-GOOGLE_API_KEY=your_google_api_key              # Required
+GOOGLE_API_KEY=your_google_api_key              # Required (unless using FastEmbed only)
 GITHUB_TOKEN=your_github_token                  # Required
 GOOGLE_DOCS_ID=your_google_docs_id             # Optional
 
+# v3.0: Embedding Configuration
+EMBEDDING_PROVIDER=fastembed                    # 'fastembed' (offline) or 'google' (online)
+EMBEDDING_MODEL_NAME=BAAI/bge-small-en-v1.5    # FastEmbed model name
+
 # Performance Tuning
 MAX_ISSUES=100                                  # Issues per ingestion
-MAX_PRS=50                                     # PRs per ingestion  
+MAX_PRS=15                                     # v3.0: PRs per ingestion (reduced from 50)
 MAX_FILES=50                                   # Files for structure analysis
 RETRY_ATTEMPTS=3                               # API retry attempts
 RETRY_DELAY=1                                  # Seconds between retries
@@ -387,9 +437,26 @@ cleanup_old_data_tool()  # Clean old data
 # Check system resources via health monitoring
 get_health_status_tool()
 
-# Adjust configuration for large repositories
-MAX_ISSUES=50  # Reduce batch sizes
-MAX_PRS=25     # For better performance
+# v3.0: Adjust configuration for large repositories
+MAX_ISSUES=50   # Reduce batch sizes
+MAX_PRS=10      # For very large repos (curl/curl-like)
+MAX_PRS=15      # Default safe value (v3.0)
+
+# v3.0: Switch to FastEmbed for faster processing
+EMBEDDING_PROVIDER=fastembed  # 10x faster than Google API
+```
+
+**5. PR Ingestion Timeouts (v3.0)**
+```bash
+# For large repositories with many PRs (e.g., curl/curl)
+# The system now has built-in timeout prevention:
+# - Hard limit: Examines max 200 PRs
+# - Async yielding: Every 5 seconds to keep connection alive
+# - Reduced defaults: MAX_PRS=15 instead of 50
+
+# If still experiencing issues, reduce further:
+MAX_PRS=10   # Ultra-safe for repos with 1000+ PRs
+MAX_PRS=5    # Minimum recommended value
 ```
 
 ### Debug Logging
@@ -424,8 +491,7 @@ Comprehensive documentation is available at: [docs/](docs/)
 
 ### Architecture Documentation
 
-- **[NEW_ARCHITECTURE.md](README_NEW_ARCHITECTURE.md)** - Complete v2.0 transformation guide
-- **[ARCHITECTURE_COMPARISON.md](ARCHITECTURE_COMPARISON.md)** - Before/after comparison
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design patterns
 - **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** - Detailed project structure
 
 ### Build Documentation

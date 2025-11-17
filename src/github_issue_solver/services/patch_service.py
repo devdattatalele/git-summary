@@ -153,14 +153,18 @@ class PatchService:
             raise
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"Unexpected error during patch generation: {e}")
-            
+            logger.error(f"Unexpected error during patch generation: {type(e).__name__}: {e}")
+            logger.exception("Full traceback:")  # This will log the full stack trace
+
             return PatchResult(
                 success=False,
                 repo_name=repo_full_name,
-                error_message=f"Unexpected error during patch generation: {str(e)}",
+                error_message=f"Unexpected error during patch generation: {type(e).__name__}: {str(e)}",
                 generated_at=datetime.now(),
-                metadata={"duration_seconds": duration}
+                metadata={
+                    "duration_seconds": duration,
+                    "error_type": type(e).__name__
+                }
             )
     
     def _create_fallback_result(self, repo_full_name: str, issue_body: str, start_time: float) -> PatchResult:

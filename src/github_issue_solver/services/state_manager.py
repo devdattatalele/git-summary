@@ -187,17 +187,24 @@ class StateManager:
         with self._lock:
             if repo_name not in self._state:
                 raise StateManagementError(f"Repository {repo_name} not found in state")
-            
+
             repo_status = self._state[repo_name]
+
+            # CRITICAL FIX: Get old documents count BEFORE updating the step
+            old_docs = 0
+            if 'documents_stored' in kwargs and step in repo_status.steps:
+                old_docs = repo_status.steps[step].documents_stored or 0
+
+            # Now update the step (this will set the new documents_stored value)
             repo_status.update_step(step, status, **kwargs)
-            
+
             # Update total documents if provided
             if 'documents_stored' in kwargs:
                 documents = kwargs['documents_stored']
-                if step in repo_status.steps:
-                    # Update total by difference
-                    old_docs = repo_status.steps[step].documents_stored or 0
-                    repo_status.total_documents += (documents - old_docs)
+                # Calculate the actual increment (new - old)
+                increment = documents - old_docs
+                repo_status.total_documents += increment
+                logger.debug(f"Documents for {step.value}: old={old_docs}, new={documents}, increment={increment}, total={repo_status.total_documents}")
             
             # Add collection if provided
             if 'collection_name' in kwargs and kwargs['collection_name']:

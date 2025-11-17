@@ -1,0 +1,38 @@
+{
+  "PERS-0C8AB741-26B10D9F-3623BB8D": {
+    "license_key": "PERS-0C8AB741-26B10D9F-3623BB8D",
+    "tier": "personal",
+    "user_id": "8ef8588d81e824e0",
+    "max_repositories": 10,
+    "max_analyses_per_month": 100,
+    "max_storage_gb": 10,
+    "issued_at": "2025-11-03T17:37:10.000992",
+    "expires_at": "2025-12-03T17:37:10.000992",
+    "is_trial": false,
+    "metadata": {}
+  },
+  "PERS-48064AD4-A210A147-5B301480": {
+    "license_key": "PERS-48064AD4-A210A147-5B301480",
+    "tier": "personal",
+    "user_id": "73fc0ce178be0c9b",
+    "max_repositories": 10,
+    "max_analyses_per_month": 100,
+    "max_storage_gb": 10,
+    "issued_at": "2025-11-03T17:40:38.962470",
+    "expires_at": "2025-12-03T17:40:38.962470",
+    "is_trial": false,
+    "metadata": {}
+  },
+  "PERS-FEDB8836-3381599D-7BBEBE8C": {
+    "license_key": "PERS-FEDB8836-3381599D-7BBEBE8C",
+    "tier": "personal",
+    "user_id": "345232a597e3eff4",
+    "max_repositories": 10,
+    "max_analyses_per_month": 100,
+    "max_storage_gb": 10,
+    "issued_at": "2025-11-04T03:35:51.706173",
+    "expires_at": "2025-12-04T03:35:51.706173",
+    "is_trial": false,
+    "metadata": {}
+  }
+}

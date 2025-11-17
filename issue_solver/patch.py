@@ -69,33 +69,46 @@ def initialize_chroma_clients(repo_name: str):
                 f"Chroma database not found at '{CHROMA_PERSIST_DIR}'. "
                 f"Please run the ingestion script first."
             )
-        
-        # Initialize embeddings
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001", 
-            google_api_key=GOOGLE_API_KEY
-        )
-        
+
+        # Initialize embeddings - MUST match the embedding provider used during ingestion
+        # This is for QUERYING the vector DB only. The LLM (Gemini) is used separately for reasoning.
+        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "google").lower()
+
+        if embedding_provider == "fastembed":
+            # Use FastEmbed (offline, no API quota needed) - matches ingestion
+            from langchain_community.embeddings import FastEmbedEmbeddings
+            model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5")
+            logger.info(f"Using FastEmbed for vector search (offline): {model_name}")
+            logger.info("Note: Gemini LLM will still be used for intelligent patch generation")
+            embeddings = FastEmbedEmbeddings(model_name=model_name)
+        else:
+            # Use Google Generative AI embeddings (requires API quota)
+            logger.info("Using Google Generative AI embeddings for vector search")
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/embedding-001",
+                google_api_key=GOOGLE_API_KEY
+            )
+
         # Create repository-specific collection names
         safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
         pr_collection_name = f"{safe_repo_name}_pr_history"
         code_collection_name = f"{safe_repo_name}_repo_code_main"
-        
+
         logger.info(f"Using collections: {pr_collection_name}, {code_collection_name}")
-        
+
         # Create vector stores for both collections
         pr_history_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
             collection_name=pr_collection_name
         )
-        
+
         repo_code_store = Chroma(
             embedding_function=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
             collection_name=code_collection_name
         )
-        
+
         return pr_history_store, repo_code_store
     except Exception as e:
         raise Exception(f"Failed to initialize Chroma clients: {e}")

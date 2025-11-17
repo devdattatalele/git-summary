@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Config
 from .exceptions import GitHubIssueSolverError, ConfigurationError
+from .license import LicenseValidator
 from .services import (
     StateManager,
     RepositoryService,
@@ -76,10 +77,16 @@ class GitHubIssueSolverServer:
     def _initialize_services(self) -> None:
         """Initialize all services with proper dependency injection."""
         try:
+            # License validator for usage tracking
+            self.services['license_validator'] = LicenseValidator(
+                self.config.supabase_url,
+                self.config.supabase_anon_key
+            )
+
             # Core services
             self.services['state_manager'] = StateManager(self.config)
             self.services['repository'] = RepositoryService(self.config)
-            
+
             # Initialize EmbeddingService first
             self.services['embedding'] = EmbeddingService(self.config)
             
@@ -143,6 +150,17 @@ class GitHubIssueSolverServer:
         async def start_repository_ingestion(repo_name: str) -> str:
             """Start the multi-step repository ingestion process."""
             try:
+                # CHECK TRIAL LIMITS BEFORE ALLOWING INGESTION
+                if self.config.license_info and self.config.license_info.is_trial:
+                    license_validator = self.services.get('license_validator')
+                    if license_validator and self.config.machine_id:
+                        allowed, message = license_validator.check_trial_limits(
+                            self.config.machine_id,
+                            'ingest'
+                        )
+                        if not allowed:
+                            return f"❌ {message}"
+
                 result = await ingestion_service.start_repository_ingestion(repo_name)
                 if result.success:
                     return self._format_ingestion_start_success(repo_name, result)
@@ -185,7 +203,38 @@ class GitHubIssueSolverServer:
         async def analyze_github_issue_tool(issue_url: str) -> dict:
             """Analyze a GitHub issue using AI and repository knowledge base."""
             try:
+                # CHECK TRIAL LIMITS BEFORE ALLOWING ANALYSIS
+                if self.config.license_info and self.config.license_info.is_trial:
+                    license_validator = self.services.get('license_validator')
+                    if license_validator and self.config.machine_id:
+                        allowed, message = license_validator.check_trial_limits(
+                            self.config.machine_id,
+                            'analyze'
+                        )
+                        if not allowed:
+                            return {"success": False, "error": message}
+
                 result = await analysis_service.analyze_github_issue(issue_url)
+
+                # Track usage for trial users after successful analysis
+                if result.success and self.config.license_info and self.config.license_info.is_trial:
+                    try:
+                        license_validator = self.services.get('license_validator')
+                        if license_validator and self.config.machine_id:
+                            license_validator.track_usage(
+                                license_key=self.config.license_info.license_key,
+                                action='analyze',
+                                repository=result.metadata.get('repository', 'unknown'),
+                                metadata={
+                                    'issue_url': issue_url,
+                                    'completed_at': datetime.now().isoformat()
+                                },
+                                machine_id=self.config.machine_id
+                            )
+                            logger.info(f"✅ Trial usage tracked for analysis")
+                    except Exception as usage_error:
+                        logger.warning(f"Failed to track trial usage: {usage_error}")
+
                 return result.to_dict()
             except Exception as e:
                 logger.error(f"Error in analyze_github_issue_tool: {e}")
@@ -198,7 +247,7 @@ class GitHubIssueSolverServer:
         async def get_repository_status(repo_name: str) -> str:
             """Get detailed repository ingestion status."""
             try:
-                progress = await analysis_service.ingestion_service.get_ingestion_progress(repo_name)
+                progress = await ingestion_service.get_ingestion_progress(repo_name)
                 return self._format_repository_status(progress)
             except Exception as e:
                 logger.error(f"Error in get_repository_status: {e}")
@@ -259,7 +308,37 @@ class GitHubIssueSolverServer:
         async def generate_code_patch_tool(issue_body: str, repo_full_name: str) -> dict:
             """Generate code patches for issue resolution."""
             try:
+                # CHECK TRIAL LIMITS BEFORE ALLOWING PATCH GENERATION
+                if self.config.license_info and self.config.license_info.is_trial:
+                    license_validator = self.services.get('license_validator')
+                    if license_validator and self.config.machine_id:
+                        allowed, message = license_validator.check_trial_limits(
+                            self.config.machine_id,
+                            'patch'
+                        )
+                        if not allowed:
+                            return {"success": False, "error": message}
+
                 result = await patch_service.generate_code_patch(issue_body, repo_full_name)
+
+                # Track usage for trial users after successful patch generation
+                if result.success and self.config.license_info and self.config.license_info.is_trial:
+                    try:
+                        license_validator = self.services.get('license_validator')
+                        if license_validator and self.config.machine_id:
+                            license_validator.track_usage(
+                                license_key=self.config.license_info.license_key,
+                                action='patch',
+                                repository=repo_full_name,
+                                metadata={
+                                    'completed_at': datetime.now().isoformat()
+                                },
+                                machine_id=self.config.machine_id
+                            )
+                            logger.info(f"✅ Trial usage tracked for patch generation")
+                    except Exception as usage_error:
+                        logger.warning(f"Failed to track trial usage: {usage_error}")
+
                 return result.to_dict()
             except Exception as e:
                 logger.error(f"Error in generate_code_patch_tool: {e}")
@@ -332,12 +411,83 @@ class GitHubIssueSolverServer:
             except Exception as e:
                 logger.error(f"Error in cleanup_old_data_tool: {e}")
                 return f"❌ **Cleanup Failed**: {str(e)}"
-    
+
+        @self.mcp.tool()
+        async def get_trial_usage() -> str:
+            """Get current trial usage statistics."""
+            try:
+                if not self.config.license_info or not self.config.license_info.is_trial:
+                    return "ℹ️ **This command is only available for trial users.**\n\nYou have a paid license. No usage limits apply."
+
+                license_validator = self.services.get('license_validator')
+                if not license_validator or not self.config.machine_id:
+                    return "❌ **Error**: Cannot retrieve trial statistics."
+
+                stats = license_validator.get_trial_usage_stats(self.config.machine_id)
+
+                if 'error' in stats:
+                    return f"❌ **Error**: {stats['error']}"
+
+                days_remaining = stats['days_remaining']
+                repos_used = stats['repositories_used']
+                repos_limit = stats['repositories_limit']
+                analyses_used = stats['analyses_used']
+                analyses_limit = stats['analyses_limit']
+                is_expired = stats['is_expired']
+
+                status_icon = "🔒" if is_expired else "✅"
+                status_text = "**Trial Expired!**" if is_expired else "**Trial Active**"
+
+                return f"""📊 **Trial Usage Statistics**
+
+{status_icon} {status_text}
+
+🗂️ **Repositories**: {repos_used}/{repos_limit} used
+   {'⚠️ Limit reached!' if repos_used >= repos_limit else f'• {repos_limit - repos_used} remaining'}
+
+📝 **Analyses**: {analyses_used}/{analyses_limit} used
+   {'⚠️ Limit reached!' if analyses_used >= analyses_limit else f'• {analyses_limit - analyses_used} remaining'}
+
+⏰ **Trial Period**:
+   • Days Remaining: {days_remaining} days
+   • Started: {stats['started_at'][:10]}
+   • Expires: {stats['expires_at'][:10]}
+
+💡 **Upgrade to unlock unlimited access:**
+   • Personal: $9/month (10 repos, 100 analyses)
+   • Team: $29/month (50 repos, 500 analyses)
+   • Enterprise: Custom pricing (unlimited)
+
+📧 **Contact**: support@yourcompany.com for license purchase"""
+            except Exception as e:
+                logger.error(f"Error getting trial stats: {e}")
+                return f"❌ **Error**: {str(e)}"
+
     async def _execute_ingestion_step(self, step_name: str, repo_name: str, step_function, is_final_step: bool = False) -> str:
         """Execute an ingestion step with consistent error handling."""
         try:
             result = await step_function(repo_name)
             if result.success:
+                # Track license usage when final step completes
+                if is_final_step:
+                    try:
+                        license_validator = self.services.get('license_validator')
+                        if license_validator and self.config.license_info:
+                            license_validator.track_usage(
+                                license_key=self.config.license_info.license_key,
+                                action='ingest',
+                                repository=repo_name,
+                                metadata={
+                                    'completed_at': datetime.now().isoformat(),
+                                    'final_step': step_name
+                                },
+                                machine_id=self.config.machine_id if self.config.license_info.is_trial else None
+                            )
+                            logger.info(f"✅ License usage tracked for repository: {repo_name}")
+                    except Exception as usage_error:
+                        # Don't fail the ingestion if usage tracking fails
+                        logger.warning(f"Failed to track license usage: {usage_error}")
+
                 progress = await self.services['ingestion'].get_ingestion_progress(repo_name)
                 return self._format_ingestion_step_success(step_name, result, progress, is_final_step)
             else:

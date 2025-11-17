@@ -30,9 +30,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # --- Configuration ---
+# Load environment variables from .env file if it exists
+# load_dotenv() will not override existing environment variables set via Docker -e flags
 load_dotenv()
 
-# Load API keys from .env file
+# Load API keys from environment (either from .env file or Docker -e flags)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GOOGLE_DOCS_ID = os.getenv("GOOGLE_DOCS_ID")
@@ -54,7 +56,7 @@ required_vars = {
 
 for var_name, var_value in required_vars.items():
     if not var_value:
-        raise ValueError(f"Required environment variable {var_name} is not set in .env file")
+        raise ValueError(f"Required environment variable {var_name} is not set in environment")
 
 # GOOGLE_DOCS_ID is optional - log warning if not present
 if not GOOGLE_DOCS_ID:
@@ -303,9 +305,9 @@ def create_fallback_analysis(issue):
         "complexity": complexity,
         "similar_issues": similar_issues
     }
-    
-    # Return as dictionary object, not JSON string
-    return fallback_json
+
+    # Return as JSON string to match the normal response format
+    return json.dumps(fallback_json)
 
 def parse_agent_output(raw_output: str):
     """Extracts and parses the JSON from the agent's raw output string."""

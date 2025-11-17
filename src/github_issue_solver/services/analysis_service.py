@@ -141,23 +141,32 @@ class AnalysisService:
             
             # Parse agent output
             try:
+                logger.info(f"Parsing agent output (type: {type(agent_raw_output).__name__})...")
                 analysis = parse_agent_output(agent_raw_output)
                 logger.info("Analysis output parsed successfully")
             except Exception as e:
+                logger.error(f"Failed to parse agent output: {type(e).__name__}: {e}")
                 raise AnalysisError(
                     f"Failed to parse analysis output: {str(e)}",
                     issue_url=issue_url,
                     repository=repo_full_name,
                     analysis_stage="output_parsing",
                     details={
-                        "raw_output": str(agent_raw_output)[:500] + "..." if len(str(agent_raw_output)) > 500 else str(agent_raw_output)
+                        "raw_output": str(agent_raw_output)[:500] + "..." if len(str(agent_raw_output)) > 500 else str(agent_raw_output),
+                        "output_type": type(agent_raw_output).__name__
                     },
                     cause=e
                 )
             
             # Create detailed report
-            timestamp = datetime.now().strftime('%d %B, %Y at %H:%M')
-            detailed_report = self._create_detailed_report(issue_info, analysis, timestamp)
+            try:
+                timestamp = datetime.now().strftime('%d %B, %Y at %H:%M')
+                logger.info(f"Creating detailed report with analysis keys: {list(analysis.keys())}")
+                detailed_report = self._create_detailed_report(issue_info, analysis, timestamp)
+                logger.info("Detailed report created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create detailed report: {type(e).__name__}: {e}")
+                raise
             
             # Append to Google Doc if configured
             if self.config.google_docs_id:
@@ -193,13 +202,17 @@ class AnalysisService:
             raise
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"Unexpected error during analysis: {e}")
-            
+            logger.error(f"Unexpected error during analysis: {type(e).__name__}: {e}")
+            logger.exception("Full traceback:")  # This will log the full stack trace
+
             return AnalysisResult(
                 success=False,
-                error_message=f"Unexpected error during analysis: {str(e)}",
+                error_message=f"Unexpected error during analysis: {type(e).__name__}: {str(e)}",
                 analyzed_at=datetime.now(),
-                metadata={"duration_seconds": duration}
+                metadata={
+                    "duration_seconds": duration,
+                    "error_type": type(e).__name__
+                }
             )
     
     def _create_detailed_report(self, issue_info: IssueInfo, analysis: Dict[str, Any], timestamp: str) -> str:

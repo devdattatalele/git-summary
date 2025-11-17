@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  github-issue-solver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: github-issue-solver-mcp
+    image: github-issue-solver:latest
+
+    # Environment variables from .env file
+    env_file:
+      - .env
+
+    # Additional environment overrides
+    environment:
+      - CHROMA_PERSIST_DIR=/data/chroma_db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MCP_TRANSPORT=${MCP_TRANSPORT:-stdio}
+      - ALLOW_NO_LICENSE=${ALLOW_NO_LICENSE:-false}
+      - LICENSE_KEY=${LICENSE_KEY:-}
+      - USER_ID=${USER_ID:-}
+
+    # Persistent storage
+    volumes:
+      - chroma_data:/data
+      # Optional: Mount local .env for development
+      # - ./.env:/app/.env:ro
+
+    # Restart policy
+    # Note: MCP servers in stdio mode should NOT restart automatically
+    # They should only run when launched by Claude Desktop or another MCP client
+    restart: "no"
+
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  chroma_data:
+    driver: local

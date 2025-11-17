@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from .exceptions import ConfigurationError
+from .license import validate_and_get_license_info, LicenseInfo
+from .user_manager import UserManager, get_user_id_from_context
 
 
 class Config:
@@ -35,6 +37,13 @@ class Config:
             "GOOGLE_API_KEY": "Google API key for embeddings and analysis",
             "GITHUB_TOKEN": "GitHub personal access token for repository access"
         }
+
+        # Supabase configuration (hardcoded, but can be overridden via env vars)
+        # These are public credentials (anon key) - safe to include in Docker image
+        self._supabase_defaults = {
+            "SUPABASE_URL": "https://obrwsclermqxtipcauoz.supabase.co",
+            "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9icndzY2xlcm1xeHRpcGNhdW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyMjgyNTgsImV4cCI6MjA3ODgwNDI1OH0.B0xS8nHWtcLJC6Z3IRkO_IXSaV4uGNVutNX6l6YmfcY"
+        }
         
         # Optional environment variables with defaults
         self._optional_vars = {
@@ -55,17 +64,28 @@ class Config:
         
         # Initialize configuration
         self._validate_and_load()
-        
+
+        # Initialize license validation (Phase 1)
+        self.license_info: Optional[LicenseInfo] = None
+        self.user_id: Optional[str] = None
+        self.user_manager: Optional[UserManager] = None
+        self.machine_id: Optional[str] = None  # For trial user tracking and enforcement
+
+        # Validate license and setup user management
+        self._setup_license_and_user()
+
     def _validate_and_load(self) -> None:
         """Validate required variables and load all configuration."""
         missing_vars = []
-        
+
         # Check required variables
         for var_name, description in self._required_vars.items():
             value = os.getenv(var_name)
             if not value:
                 missing_vars.append(f"{var_name} ({description})")
-        
+
+        # Note: Supabase vars have defaults, so not checking them here
+
         if missing_vars:
             raise ConfigurationError(
                 f"Missing required environment variables: {', '.join([var.split(' (')[0] for var in missing_vars])}",
@@ -85,7 +105,11 @@ class Config:
         # Required values
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
         self.github_token = os.getenv("GITHUB_TOKEN")
-        
+
+        # Supabase configuration (use defaults, allow environment override)
+        self.supabase_url = os.getenv("SUPABASE_URL", self._supabase_defaults["SUPABASE_URL"])
+        self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", self._supabase_defaults["SUPABASE_ANON_KEY"])
+
         # Optional values with defaults
         self.google_docs_id = os.getenv("GOOGLE_DOCS_ID")
         
@@ -127,21 +151,74 @@ class Config:
         self.gemini_embedding_model = "models/embedding-004"
         self.gemini_chat_model = "gemini-1.5-pro-latest"  # Updated to a more recent model
         
+    def _setup_license_and_user(self) -> None:
+        """Setup license validation and user management."""
+        try:
+            # Validate license (using Supabase)
+            self.license_info = validate_and_get_license_info(
+                supabase_url=self.supabase_url,
+                supabase_key=self.supabase_anon_key
+            )
+            logger.info(f"License validated: {self.license_info.tier} tier")
+
+            # Get machine ID for trial users (for tracking and limit enforcement)
+            if self.license_info.is_trial:
+                from .license import get_machine_id
+                self.machine_id = get_machine_id()
+                logger.info(f"Trial user - Machine ID: {self.machine_id[:8]}...")
+                logger.info(f"Trial limits: 3 repositories, 10 analyses, {self.license_info.days_remaining()} days remaining")
+
+            # Get user ID from license or environment
+            self.user_id = get_user_id_from_context()
+            logger.info(f"User ID: {self.user_id}")
+
+            # Initialize user manager
+            self.user_manager = UserManager(self.chroma_persist_dir)
+            logger.info("User manager initialized")
+
+        except Exception as e:
+            logger.error(f"License/User setup failed: {e}")
+            raise ConfigurationError(
+                f"Failed to initialize license validation: {str(e)}"
+            )
+
     def get_collection_name(self, repo_name: str, collection_type: str) -> str:
         """
         Get the full collection name for a repository and type.
-        
+        Now includes user isolation.
+
         Args:
             repo_name: Repository name in 'owner/repo' format
             collection_type: Type of collection (docs, code, issues, prs)
-            
+
         Returns:
-            Full collection name
+            Full collection name with user isolation
         """
-        safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
-        base_name = self.collection_names.get(collection_type, collection_type)
-        return f"{safe_repo_name}_{base_name}"
-    
+        if self.user_manager and self.user_id:
+            # Use user-isolated collection name
+            return self.user_manager.get_collection_name(
+                self.user_id,
+                repo_name,
+                collection_type
+            )
+        else:
+            # Fallback to old naming (for backward compatibility)
+            safe_repo_name = repo_name.replace('/', '_').replace('-', '_').lower()
+            base_name = self.collection_names.get(collection_type, collection_type)
+            return f"{safe_repo_name}_{base_name}"
+
+    def get_user_chroma_dir(self) -> Path:
+        """
+        Get ChromaDB directory for current user.
+
+        Returns:
+            Path to user's ChromaDB directory
+        """
+        if self.user_manager and self.user_id:
+            return self.user_manager.get_user_chroma_dir(self.user_id)
+        else:
+            return self.chroma_persist_dir
+
     def ensure_chroma_dir(self) -> None:
         """Ensure ChromaDB directory exists with proper permissions."""
         try:
